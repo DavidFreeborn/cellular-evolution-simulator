@@ -22,13 +22,14 @@ class Simulator {
         this._worldPixels = null;
         this._renderPalettes = null;
 
-        // Recent history (full resolution, last 2000 ticks)
+        // Recent history (full resolution, kept much longer so the history modal
+        // stays close to per-tick raw data for ordinary runs)
         this.popHistory = [];
         this.energyHistory = [];
         this.diversityHistory = [];
         this.cellDistHistory = [];  // Array of {muscle, sensor, mouth, photo, shield, emit, decay} objects
         this.extinctionHistory = [];
-        this.maxHistoryLength = 2000;  // Recent history window
+        this.maxHistoryLength = 20000;  // Recent history window
         this.sidebarChartWindow = 500; // Sidebar charts show only last N ticks
 
         // Compressed history (older data in chunks)
@@ -36,7 +37,7 @@ class Simulator {
         this.compressedDivHistory = [];
         this.compressedCellDistHistory = []; // [{muscle: {min,max,avg,final}, ...}, ...]
         this.activeSpeciesSignatures = new Set();
-        this.ticksPerChunk = 1000;
+        this.ticksPerChunk = 250;
         this.recentHistoryStartTick = 0;     // Tick number of first entry in recent history
 
         // Species history tracking (signature -> stats)
@@ -850,6 +851,28 @@ class Simulator {
         requestAnimationFrame(() => setZoom(this.zoom));
     }
 
+    getNeuralInputLabels(org) {
+        const labels = ['Energy'];
+        const numNoses = org.typeCounts[CELL_NOSE] || 0;
+        const numSensors = org.typeCounts[CELL_SENSOR];
+        const noseDirs = ['Ahead', 'Right', 'Back', 'Left'];
+
+        for (let i = 0; i < numNoses; i++) {
+            for (let d = 0; d < noseDirs.length; d++) {
+                labels.push(`N${i + 1} ${noseDirs[d]}`);
+            }
+        }
+
+        for (let i = 0; i < numSensors; i++) {
+            for (let c = 0; c < EYE_CHANNEL_TYPES.length; c++) {
+                labels.push(`E${i + 1} ${CELL_NAMES[EYE_CHANNEL_TYPES[c]]}`);
+            }
+            labels.push(`E${i + 1} Emit`);
+        }
+
+        return labels;
+    }
+
     drawNeuralNetwork(org) {
         const canvas = document.getElementById('nn-canvas');
         const ctx = canvas.getContext('2d');
@@ -869,27 +892,21 @@ class Simulator {
 
         // Calculate layer positions
         const numLayers = brain.hiddenSizes.length + 2; // input + hidden + output
-        const layerSpacing = width / (numLayers + 1);
         const padding = 15;
+        const leftMargin = 96;
+        const rightMargin = 82;
+        const usableWidth = Math.max(120, width - leftMargin - rightMargin);
+        const layerSpacing = numLayers > 1 ? usableWidth / (numLayers - 1) : 0;
 
-        // Build layer info: [{size, x, label}]
+        // Build layer info: [{size, x, labels}]
         const layers = [];
 
-        // Input layer - group sensors
-        const numSensors = org.typeCounts[CELL_SENSOR];
-        const numNoses = org.typeCounts[CELL_NOSE] || 0;
-        const inputGroups = [{name: 'Energy', size: 1}];
-        for (let i = 0; i < numNoses; i++) {
-            inputGroups.push({name: `Nose ${i+1}`, size: 4});
-        }
-        for (let i = 0; i < numSensors; i++) {
-            inputGroups.push({name: `Eye ${i+1}`, size: SENSOR_INPUTS});
-        }
-        layers.push({groups: inputGroups, x: layerSpacing, isInput: true});
+        const inputLabels = this.getNeuralInputLabels(org);
+        layers.push({labels: inputLabels, size: inputLabels.length, x: leftMargin, isInput: true});
 
         // Hidden layers
         for (let i = 0; i < brain.hiddenSizes.length; i++) {
-            layers.push({size: brain.hiddenSizes[i], x: layerSpacing * (i + 2)});
+            layers.push({size: brain.hiddenSizes[i], x: leftMargin + layerSpacing * (i + 1)});
         }
 
         // Output layer
@@ -898,10 +915,9 @@ class Simulator {
         const outputLabels = ['Repro'];
         for (let i = 0; i < numEmitters; i++) outputLabels.push(`Emit${i+1}`);
         if (hasMuscles) outputLabels.push('Fwd', 'Back', 'RotCW', 'RotCC');
-        layers.push({labels: outputLabels, size: brain.dout, x: layerSpacing * (numLayers), isOutput: true});
+        layers.push({labels: outputLabels, size: brain.dout, x: leftMargin + layerSpacing * (numLayers - 1), isOutput: true});
 
         // Draw connections first (behind nodes)
-        ctx.lineWidth = 0.5;
         for (let l = 0; l < brain.layers.length; l++) {
             const layer = brain.layers[l];
             const fromLayer = l === 0 ? layers[0] : layers[l];
@@ -922,16 +938,17 @@ class Simulator {
                     const absWeight = Math.abs(weight);
                     if (absWeight < 0.1) continue; // Skip weak connections
 
-                    const alpha = Math.min(0.8, absWeight * 0.8);
+                    const alpha = Math.min(0.85, 0.18 + absWeight * 0.9);
                     ctx.strokeStyle = weight > 0 ?
                         `rgba(100, 200, 100, ${alpha})` :
                         `rgba(200, 100, 100, ${alpha})`;
+                    ctx.lineWidth = Math.min(1.7, 0.85 + absWeight * 1.15);
 
                     const fromY = this.getNodeY(i, fromSize, height, padding);
                     const toY = this.getNodeY(j, toSize, height, padding);
 
                     ctx.beginPath();
-                    ctx.moveTo(fromLayer.x || layerSpacing, fromY);
+                    ctx.moveTo(fromLayer.x, fromY);
                     ctx.lineTo(toLayer.x, toY);
                     ctx.stroke();
                 }
@@ -943,22 +960,22 @@ class Simulator {
             const layer = layers[l];
 
             if (layer.isInput) {
-                // Draw grouped input nodes
-                let yOffset = padding;
-                const groupHeight = (height - 2 * padding) / layer.groups.length;
-                for (let g = 0; g < layer.groups.length; g++) {
-                    const group = layer.groups[g];
-                    const y = yOffset + groupHeight / 2;
+                const fontSize = layer.size > 14 ? 7 : 8;
+                for (let i = 0; i < layer.size; i++) {
+                    const y = this.getNodeY(i, layer.size, height, padding);
 
                     ctx.fillStyle = '#4a90d9';
-                    ctx.fillRect(layer.x - 25, y - 8, 50, 16);
+                    ctx.beginPath();
+                    ctx.arc(layer.x, y, 5, 0, Math.PI * 2);
+                    ctx.fill();
 
-                    ctx.fillStyle = '#fff';
-                    ctx.font = '9px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(group.name, layer.x, y + 3);
-
-                    yOffset += groupHeight;
+                    if (layer.labels && layer.labels[i]) {
+                        ctx.fillStyle = '#cfd8e3';
+                        ctx.font = `${fontSize}px sans-serif`;
+                        ctx.textAlign = 'right';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(layer.labels[i], layer.x - 10, y);
+                    }
                 }
             } else if (layer.isOutput) {
                 // Draw labeled output nodes
@@ -974,7 +991,8 @@ class Simulator {
                         ctx.fillStyle = '#aaa';
                         ctx.font = '8px sans-serif';
                         ctx.textAlign = 'left';
-                        ctx.fillText(layer.labels[i], layer.x + 10, y + 3);
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(layer.labels[i], layer.x + 10, y);
                     }
                 }
             } else {

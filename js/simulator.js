@@ -22,22 +22,21 @@ class Simulator {
         this._worldPixels = null;
         this._renderPalettes = null;
 
-        // Recent history (full resolution, kept much longer so the history modal
-        // stays close to per-tick raw data for ordinary runs)
+        // Recent history. Population/diversity/extinction are cheap enough to keep
+        // raw for very long runs; cell distribution is the only heavy series.
         this.popHistory = [];
         this.energyHistory = [];
         this.diversityHistory = [];
         this.cellDistHistory = [];  // Array of {muscle, sensor, mouth, photo, shield, emit, decay} objects
         this.extinctionHistory = [];
-        this.maxHistoryLength = 20000;  // Recent history window
+        this.maxEnergyHistoryLength = 5000;
+        this.maxCellDistHistoryLength = 50000;
         this.sidebarChartWindow = 500; // Sidebar charts show only last N ticks
 
-        // Compressed history (older data in chunks)
-        this.compressedPopHistory = [];      // [{min, max, avg, final}, ...]
-        this.compressedDivHistory = [];
+        // Compressed history for heavier series only
         this.compressedCellDistHistory = []; // [{muscle: {min,max,avg,final}, ...}, ...]
         this.activeSpeciesSignatures = new Set();
-        this.ticksPerChunk = 250;
+        this.ticksPerChunk = 100;
         this.recentHistoryStartTick = 0;     // Tick number of first entry in recent history
 
         // Species history tracking (signature -> stats)
@@ -70,8 +69,6 @@ class Simulator {
             this.extinctionHistory = [];
 
             // Reset compressed history
-            this.compressedPopHistory = [];
-            this.compressedDivHistory = [];
             this.compressedCellDistHistory = [];
             this.activeSpeciesSignatures = new Set();
             this.recentHistoryStartTick = 0;
@@ -217,8 +214,12 @@ class Simulator {
         this.cellDistHistory.push(cellDist);
         this.extinctionHistory.push(extinctionsThisTick);
 
-        // Compress old data when recent history exceeds maxHistoryLength
-        if (this.popHistory.length > this.maxHistoryLength) {
+        if (this.energyHistory.length > this.maxEnergyHistoryLength) {
+            this.energyHistory.splice(0, this.energyHistory.length - this.maxEnergyHistoryLength);
+        }
+
+        // Compress only the heavy cell distribution history.
+        if (this.cellDistHistory.length > this.maxCellDistHistoryLength) {
             this.compressOldHistory();
         }
 
@@ -1041,30 +1042,9 @@ class Simulator {
     // Compress oldest chunk of history into summary
     compressOldHistory() {
         const chunkSize = this.ticksPerChunk;
-        if (this.popHistory.length < chunkSize) return;
+        if (this.cellDistHistory.length < chunkSize) return;
 
-        // Take first chunk
-        const popChunk = this.popHistory.splice(0, chunkSize);
-        const divChunk = this.diversityHistory.splice(0, chunkSize);
         const cellChunk = this.cellDistHistory.splice(0, chunkSize);
-        this.energyHistory.splice(0, chunkSize);  // We don't compress energy, just discard
-
-        // Helper function to compute min/max/avg without spread operator (avoids stack overflow)
-        const computeStats = (arr) => {
-            let min = arr[0], max = arr[0], sum = 0;
-            for (let i = 0; i < arr.length; i++) {
-                if (arr[i] < min) min = arr[i];
-                if (arr[i] > max) max = arr[i];
-                sum += arr[i];
-            }
-            return { min, max, avg: sum / arr.length, final: arr[arr.length - 1], span: arr.length };
-        };
-
-        // Compress population
-        this.compressedPopHistory.push(computeStats(popChunk));
-
-        // Compress diversity
-        this.compressedDivHistory.push(computeStats(divChunk));
 
         // Compress cell distribution
         const cellTypes = ['muscle', 'nose', 'sensor', 'mouth', 'photo', 'shield', 'emit', 'decay'];
@@ -1092,46 +1072,12 @@ class Simulator {
 
     // Get full population history for rendering (combines compressed + recent)
     getFullPopulationHistory() {
-        const result = [];
-
-        // Add compressed chunks (use average value for each chunk)
-        for (const chunk of this.compressedPopHistory) {
-            result.push({
-                value: chunk.avg,
-                min: chunk.min,
-                max: chunk.max,
-                span: chunk.span || this.ticksPerChunk,
-                isCompressed: true
-            });
-        }
-
-        // Add recent data
-        for (const val of this.popHistory) {
-            result.push({value: val, span: 1, isCompressed: false});
-        }
-
-        return result;
+        return this.popHistory.map(val => ({ value: val, span: 1, isCompressed: false }));
     }
 
     // Get full diversity history
     getFullDiversityHistory() {
-        const result = [];
-
-        for (const chunk of this.compressedDivHistory) {
-            result.push({
-                value: chunk.avg,
-                min: chunk.min,
-                max: chunk.max,
-                span: chunk.span || this.ticksPerChunk,
-                isCompressed: true
-            });
-        }
-
-        for (const val of this.diversityHistory) {
-            result.push({value: val, span: 1, isCompressed: false});
-        }
-
-        return result;
+        return this.diversityHistory.map(val => ({ value: val, span: 1, isCompressed: false }));
     }
 
     // Get full cell distribution history

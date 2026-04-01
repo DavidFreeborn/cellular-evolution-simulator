@@ -1,0 +1,11 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local experiment output and scratch analysis
+analysis/
+.codex*
+
+# Logs
+*.log

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cellular Evolution Simulator</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Welcome Screen -->
+    <div id="welcome-screen" class="container">
+        <h1>Cellular Evolution Simulator</h1>
+
+        <div class="welcome-content">
+            <h2>Welcome</h2>
+            <p>Watch multicellular life evolve through mutation, selection, crowding, predation, and changing energy conditions. The point is not to script behavior, but to build a world simple enough that useful strategies can discover themselves.</p>
+
+            <h2>How It Works</h2>
+            <p>Multi-cellular organisms act and reproduce in a 224x224 grid world (50,176 cells of space). Each organism is composed of different cell types with unique functions:</p>
+
+            <div class="cell-type-grid">
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #7878FF;"></div>
+                    <div><strong>Muscle:</strong> Movement</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #78FF78;"></div>
+                    <div><strong>Photo:</strong> Photosynthesis</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FF7878;"></div>
+                    <div><strong>Teeth:</strong> Eating living tissue and decay</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #78DCDC;"></div>
+                    <div><strong>Shield:</strong> Protection</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFA050;"></div>
+                    <div><strong>Nose:</strong> Smells nearby organisms</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFFF78;"></div>
+                    <div><strong>Eye:</strong> Detects cell types ahead and emitter signals</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFFFFF;"></div>
+                    <div><strong>Emitter:</strong> Broadcasts a signal from 0 to 1</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #966432;"></div>
+                    <div><strong>Decay:</strong> Dead cells</div>
+                </div>
+            </div>
+
+            <h2>Energy Economy</h2>
+            <ul>
+                <li><strong>Photosynthesis:</strong> Photo cells gain energy only in lit areas.</li>
+                <li><strong>Shade:</strong> Nearby photo cells compete in local 3x3 neighborhoods, so crowded photo patches are less efficient.</li>
+                <li><strong>Metabolism:</strong> Most body cells cost 0.05 energy per tick. Eyes and noses currently have zero baseline metabolism.</li>
+                <li><strong>Movement:</strong> Successful movement costs 0.31 energy per cargo cell. Muscles, eyes, noses, and emitters are treated as free to carry.</li>
+                <li><strong>Brain cost:</strong> Brains pay 0.0002 energy per node per tick, plus 0.005 per hidden layer.</li>
+                <li><strong>Teeth:</strong> Adjacent bites recover structural energy and some stored energy, but repeated living-organism kills are limited by a digestion cooldown.</li>
+                <li><strong>Reproduction:</strong> Creating offspring costs 3 energy per cell and can happen either from brain output or automatically at high energy.</li>
+            </ul>
+
+            <h2>Sunlight Modes</h2>
+            <p>Sunlight changes the geography of photosynthesis. Static plant-like bodies thrive in different places depending on how much of the world is brightly lit and how often those lit zones shift.</p>
+            <ul>
+                <li><strong>Default:</strong> Sunlight is available everywhere.</li>
+                <li><strong>Central sunlight:</strong> Light is strongest in the center and gently falls off toward the edges instead of cutting off sharply.</li>
+                <li><strong>Refugia mode:</strong> The world alternates every 1000 ticks between uniform light and a concentrated refugia phase with five bright patches, each covering about 10% of the map.</li>
+            </ul>
+
+            <h2>Features</h2>
+            <ul>
+                <li><strong>Neural networks:</strong> Each organism carries a small feed-forward brain. Inputs depend on its body, but always include energy; outputs can drive reproduction, emitter intensity, and movement.</li>
+                <li><strong>Nose mechanics:</strong> Each nose scans a local 5x5 neighborhood and reports four directional density readings relative to facing: ahead, right, back, and left.</li>
+                <li><strong>Eye mechanics:</strong> Each eye reads the single cell directly ahead, with one input per cell type plus one input for emitter signal strength.</li>
+                <li><strong>Emitter mechanics:</strong> Emitters broadcast a 0-1 signal that eyes can detect, so they can evolve into simple signaling channels as well as environmental cues.</li>
+                <li><strong>Predation mechanics:</strong> Teeth bite automatically on contact, and movers get initiative after successful movement or rotation.</li>
+            </ul>
+
+            <h2>What To Watch For</h2>
+            <ul>
+                <li>Punctuated dynamics: relatively stable intervals interrupted by extinction pulses</li>
+                <li>Adaptive radiations and ecological reorganization following extinction events</li>
+                <li>Refugia potentially supporting higher biodiversity and longer coexistence</li>
+                <li>Oscillatory predator-prey dynamics, including overshoot, collapse, and transient shifts in trophic dominance</li>
+                <li>Coevolutionary arms races between predators, prey, and defensive forms</li>
+                <li>Attractor-like regimes in evolutionary space, with convergent evolution toward similar body plans in independent lineages</li>
+                <li>Historical contingency and path dependence, with different runs settling into different long-lived regimes</li>
+                <li>Possible evolution of sensory systems, especially noses and eyes, within mobile lineages</li>
+                <li>Possible evolution of signaling through emitters and signal-responsive eyes</li>
+                <li>Trade-offs between local specialists and generalists in variable sunlight regimes</li>
+            </ul>
+        </div>
+
+        <div class="welcome-footer">
+            <label for="welcome-sunlight-mode">Sunlight mode:</label>
+            <select id="welcome-sunlight-mode">
+                <option value="default">Default</option>
+                <option value="central">Central sunlight</option>
+                <option value="refugia">Refugia mode</option>
+            </select>
+            <button class="btn btn-primary" id="start-sim-btn" style="padding: 12px 32px; font-size: 16px;">Start Simulation</button>
+        </div>
+    </div>
+
+    <!-- Simulation Screen -->
+    <div id="simulation-screen">
+        <!-- Top Toolbar -->
+        <div class="top-toolbar">
+            <span class="toolbar-title">Cellular Evolution Simulator</span>
+            <div class="toolbar-divider"></div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" id="start-btn">Start</button>
+                <button class="btn btn-secondary" id="step-btn">Step</button>
+                <button class="btn btn-secondary" id="reset-btn">Reset</button>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="control-group">
+                <label for="speed-slider">Speed:</label>
+                <input type="range" id="speed-slider" min="1" max="128" value="15">
+                <span class="param-value" id="speed-value">15/sec</span>
+            </div>
+
+            <div class="control-group">
+                <label for="zoom-slider">Zoom:</label>
+                <input type="range" id="zoom-slider" min="40" max="200" value="40" step="5">
+                <span class="param-value" id="zoom-value">40%</span>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="control-group">
+                <label for="death-rate">Death:</label>
+                <input type="range" id="death-rate" min="0" max="10" value="1.4" step="0.1">
+                <span class="param-value" id="death-rate-value">1.4%</span>
+            </div>
+
+            <div class="control-group">
+                <label for="mutation-rate">Mutation:</label>
+                <input type="range" id="mutation-rate" min="0" max="25" value="2" step="0.5">
+                <span class="param-value" id="mutation-rate-value">2%</span>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="control-group">
+                <label for="sunlight-mode">Sunlight:</label>
+                <select id="sunlight-mode">
+                    <option value="default">Default</option>
+                    <option value="central">Central</option>
+                    <option value="refugia">Refugia</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="refugia-epoch">Epoch:</label>
+                <input type="range" id="refugia-epoch" min="100" max="5000" value="1000" step="100">
+                <span class="param-value" id="refugia-epoch-value">1000t</span>
+            </div>
+
+            <div class="toolbar-divider"></div>
+
+            <div class="control-group">
+                <input type="checkbox" id="show-grid">
+                <label for="show-grid">Grid</label>
+            </div>
+
+            <button class="btn btn-secondary btn-small" id="design-btn">Design organism</button>
+            <button class="btn btn-secondary btn-small" id="spawn-btn">Seed organism</button>
+            <button class="btn btn-secondary btn-small" id="history-btn">History</button>
+            <button class="btn btn-secondary btn-small" id="guide-btn">Guide</button>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-layout">
+            <!-- Species Panel (Left) -->
+            <div class="legend-panel">
+                <h2>Top 5 Species</h2>
+                <div id="top-species-detail" style="font-size: 0.9em;"></div>
+
+                <div class="legend-section" style="margin-top: 15px;">
+                    <h3>Total Cell Distribution</h3>
+                    <div class="cell-dist-bars" id="cell-dist-bars"></div>
+                </div>
+            </div>
+
+            <!-- Canvas Panel (Center) -->
+            <div class="canvas-panel">
+                <div class="canvas-container" id="canvas-container">
+                    <canvas id="sim-canvas" width="768" height="768"></canvas>
+                </div>
+            </div>
+
+            <!-- Stats Panel (Right) -->
+            <div class="right-panel">
+                <div class="info-panel">
+                    <h2>Statistics</h2>
+                    <dl class="stats-grid">
+                        <dt>Tick:</dt>
+                        <dd id="stat-generation">0</dd>
+                        <dt>Population:</dt>
+                        <dd id="stat-population">0</dd>
+                        <dt>Total Energy:</dt>
+                        <dd id="stat-energy">0</dd>
+                        <dt>Distinct Species:</dt>
+                        <dd id="stat-diversity">0</dd>
+                        <dt>Total Births:</dt>
+                        <dd id="stat-births">0</dd>
+                        <dt>Total Deaths:</dt>
+                        <dd id="stat-deaths">0</dd>
+                        <dt>Predations:</dt>
+                        <dd id="stat-predations">0</dd>
+                    </dl>
+
+                    <h3>Population History</h3>
+                    <canvas id="pop-chart" class="chart-container" width="300" height="100"></canvas>
+
+                    <h3>Species Over Time</h3>
+                    <canvas id="diversity-chart" class="chart-container" width="300" height="100"></canvas>
+
+                    <h3>Cell Distribution</h3>
+                    <canvas id="cell-dist-chart" class="chart-container" width="300" height="140"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Panel for Selected Organism -->
+        <div class="bottom-panel" id="bottom-panel">
+            <button class="bottom-panel-close" id="bottom-panel-close-btn" title="Close">&times;</button>
+            <div class="bottom-panel-content">
+                <div class="organism-preview">
+                    <h4 id="org-title">Organism #123</h4>
+                    <canvas id="organism-shape-canvas" width="120" height="120"></canvas>
+                    <span class="organism-preview-label" id="org-species-count">1 of this species</span>
+                </div>
+                <div class="organism-stats">
+                    <h4>Status</h4>
+                    <dl class="stats-grid">
+                        <dt>Energy:</dt>
+                        <dd id="org-energy">0</dd>
+                        <dt>Age:</dt>
+                        <dd id="org-age">0 ticks</dd>
+                        <dt>Size:</dt>
+                        <dd id="org-size">0 cells</dd>
+                        <dt>Facing:</dt>
+                        <dd id="org-facing">North</dd>
+                        <dt>Speed:</dt>
+                        <dd id="org-speed">0%</dd>
+                    </dl>
+                </div>
+                <div class="organism-comp">
+                    <h4>Composition</h4>
+                    <div id="org-composition" class="organism-composition"></div>
+                </div>
+                <div class="neural-network-container">
+                    <div class="nn-header">
+                        <h4>Neural Network</h4>
+                        <span id="nn-info"></span>
+                    </div>
+                    <canvas id="nn-canvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Guide Modal -->
+    <div id="guide-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Quick Guide</h2>
+                <button class="modal-close" id="guide-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <h3>Cell Types</h3>
+                <ul>
+                    <li><strong style="color: #78FF78;">Photo</strong> - Generates energy from light</li>
+                    <li><strong style="color: #FF7878;">Teeth</strong> - Eats other organisms and decay</li>
+                    <li><strong style="color: #7878FF;">Muscle</strong> - Enables movement</li>
+                    <li><strong style="color: #78DCDC;">Shield</strong> - Protection</li>
+                    <li><strong style="color: #FFA050;">Nose</strong> - Smells nearby organisms with four local directional density inputs</li>
+                    <li><strong style="color: #FFFF78;">Eye</strong> - Reads the single cell directly ahead plus any emitter signal there</li>
+                    <li><strong style="color: #FFFFFF;">Emitter</strong> - Broadcasts signals visible to eyes</li>
+                    <li><strong style="color: #966432;">Decay</strong> - Dead cells that can still be eaten for a while</li>
+                </ul>
+
+                <h3>Controls</h3>
+                <ul>
+                    <li><strong>Start/Stop</strong> - Toggle simulation</li>
+                    <li><strong>Step</strong> - Advance one tick</li>
+                    <li><strong>Reset</strong> - Restart simulation</li>
+                    <li><strong>Speed</strong> - Ticks per second</li>
+                    <li><strong>Zoom</strong> - View size</li>
+                    <li><strong>Death</strong> - Random death chance per tick</li>
+                    <li><strong>Mutation</strong> - Body mutation rate</li>
+                    <li><strong>Sunlight</strong> - Switch between global light, a central gradient, and alternating refugia phases</li>
+                </ul>
+
+                <h3>Features</h3>
+                <ul>
+                    <li><strong>Shade:</strong> Photo cells reduce each other's yield in crowded 3x3 clusters.</li>
+                    <li><strong>Brains:</strong> New organisms start without hidden layers. Their feed-forward networks can later evolve extra nodes or depth, but depth costs energy.</li>
+                    <li><strong>Noses:</strong> Each nose reports local density in four directions relative to facing.</li>
+                    <li><strong>Eyes:</strong> Each eye reads the next cell ahead and any emitter signal there.</li>
+                    <li><strong>Emitters:</strong> Emitters can be used for signaling because eyes can read their 0-1 output.</li>
+                </ul>
+
+                <h3>Inspect Organisms</h3>
+                <p>Click any organism to inspect its body, energy, age, species count, and neural network.</p>
+
+                <h3>Design Organisms</h3>
+                <p>Click <strong>Design organism</strong> to create a custom body, then use <strong>Seed organism</strong> to place copies into the world.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="guide-modal-ok">Got it!</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Organism Designer Modal -->
+    <div id="designer-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Design organism</h2>
+                <button class="modal-close" id="designer-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="designer-layout">
+                    <div class="designer-palette" id="designer-palette">
+                        <!-- Palette buttons generated by JS -->
+                    </div>
+                    <div class="designer-grid-container">
+                        <div class="designer-grid" id="designer-grid">
+                            <!-- Grid cells generated by JS -->
+                        </div>
+                    </div>
+                    <div class="designer-preview">
+                        <canvas id="designer-preview-canvas" width="120" height="120"></canvas>
+                        <div class="designer-stats">
+                            <div>Cells: <span id="designer-cell-count">0</span></div>
+                            <div id="designer-validity">Min 4 cells required</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="designer-clear">Clear</button>
+                <button class="btn btn-secondary" id="designer-cancel">Cancel</button>
+                <button class="btn btn-primary" id="designer-create" disabled>Create Organism</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Modal -->
+    <div id="history-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Simulation History</h2>
+                <button class="modal-close" id="history-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="history-layout">
+                    <div class="history-charts">
+                        <div class="history-chart-container">
+                            <h4>Population Over Time (Full History)</h4>
+                            <canvas id="history-pop-chart"></canvas>
+                        </div>
+                        <div class="history-chart-container">
+                            <h4>Species Diversity (Full History)</h4>
+                            <canvas id="history-div-chart"></canvas>
+                        </div>
+                        <div class="history-chart-container">
+                            <h4>Extinction Rate (100-Tick Moving Average)</h4>
+                            <canvas id="history-extinction-chart"></canvas>
+                        </div>
+                        <div class="history-chart-container">
+                            <h4>Cell Distribution (Full History)</h4>
+                            <canvas id="history-cell-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="history-stats-grid">
+                        <div class="history-stat-section">
+                            <h4>Top Species (All Time)</h4>
+                            <div id="history-top-species" class="species-list"></div>
+                        </div>
+                        <div class="history-stat-section">
+                            <h4>Dramatic Extinctions</h4>
+                            <div id="history-extinctions" class="species-list"></div>
+                        </div>
+                        <div class="history-stat-section">
+                            <h4>Top Killers</h4>
+                            <div id="history-predatory" class="species-list"></div>
+                        </div>
+                        <div class="history-stat-section">
+                            <h4>Overall Statistics</h4>
+                            <div class="stat-summary">
+                                <div class="stat-item">
+                                    <div class="stat-value" id="history-total-gens">0</div>
+                                    <div class="stat-label">Ticks</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-value" id="history-total-births">0</div>
+                                    <div class="stat-label">Total Births</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-value" id="history-total-deaths">0</div>
+                                    <div class="stat-label">Total Deaths</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-value" id="history-total-predations">0</div>
+                                    <div class="stat-label">Predations</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="history-modal-ok">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts loaded in dependency order -->
+    <script src="js/constants.js"></script>
+    <script src="js/brain.js"></script>
+    <script src="js/organism.js"></script>
+    <script src="js/corpse.js"></script>
+    <script src="js/world.js"></script>
+    <script src="js/simulator.js"></script>
+    <script src="js/main.js"></script>
+    <script src="js/ui.js"></script>
+</body>
+</html>

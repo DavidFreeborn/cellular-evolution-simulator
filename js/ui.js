@@ -36,6 +36,7 @@ function startSimulation() {
     }
     document.getElementById('welcome-screen').style.display = 'none';
     document.getElementById('simulation-screen').classList.add('active');
+    requestAnimationFrame(() => { document.getElementById("start-btn")?.focus({preventScroll:true}); window.scrollTo(0, 0); });
 
     simulator = new Simulator();
     simulator.init();

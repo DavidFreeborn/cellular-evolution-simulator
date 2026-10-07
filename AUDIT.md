@@ -1,6 +1,6 @@
 # Correctness and performance audit — 7 October 2026
 
-Repairs are local to this repository, based on commit `988d432e3ccd89fa97e79dc4c6052c68c6a1a6b7`. Deployment is separate. The static, dependency-free application and its scientific rules remain recognisable; this is not an attempt to select for complexity by changing fitness rewards.
+Repairs are based on commit `988d432e3ccd89fa97e79dc4c6052c68c6a1a6b7` and integrated with the subsequent shared-navigation and typography updates through `2be8253`. The website vendors the same application files; its production deployment is managed separately. The static, dependency-free application and its scientific rules remain recognisable; this is not an attempt to select for complexity by changing fitness rewards.
 
 ## Correctness repairs
 

@@ -102,12 +102,9 @@ function setupSimulationEventListeners() {
 
     // Speed slider
     document.getElementById('speed-slider').addEventListener('input', (e) => {
+        simulationClock.setRate(performance.now(), parseInt(e.target.value));
         simulator.speed = parseInt(e.target.value);
         document.getElementById('speed-value').textContent = `${simulator.speed}/sec`;
-        if (simulator.running && document.hidden) {
-            stopSimLoop();
-            startSimLoop();
-        }
     });
 
     // Zoom slider
@@ -799,15 +796,27 @@ function formatNumber(n) {
 // Core UI Functions
 // =====================
 
-// Background tab handling
-let backgroundIntervalId = null;
-let lastTime = 0;
-let stepAccumulator = 0;
+// The simulation clock runs independently of animation frames.
+const simulationClock = new SimulationClock();
+let clockWorker = null;
+let fallbackHeartbeat = null;
 
-function resetFrameTiming() {
-    lastTime = 0;
-    stepAccumulator = 0;
+function advanceSimulation() {
+    if (!simulator || !simulator.running) return;
+    simulationClock.accrue(performance.now());
+    const deadline = performance.now() + 16;
+    let completed = 0;
+    while (completed < 128 && performance.now() < deadline) {
+        const count = simulationClock.take(4);
+        if (!count) break;
+        // Use the public batch operation: it updates both model statistics and
+        // visible UI, while suppressing canvas rendering in a background tab.
+        simulator.stepBatch(count);
+        completed += count;
+    }
 }
+
+function resetFrameTiming() { simulationClock.stop(); }
 
 function toggleRunning() {
     if (!simulator) return;
@@ -824,63 +833,39 @@ function toggleRunning() {
 }
 
 function startSimLoop() {
-    resetFrameTiming();
-    if (document.hidden) {
-        // Tab is hidden, use setInterval
-        startBackgroundLoop();
-    } else {
-        // Tab is visible, use requestAnimationFrame
-        animationId = requestAnimationFrame(runLoop);
+    stopSimLoop();
+    simulationClock.start(performance.now(), simulator.speed);
+    // Dedicated workers continue to send ticks when requestAnimationFrame stops.
+    // If workers are unavailable, elapsed-time accounting also handles throttled timers.
+    try {
+        clockWorker = new Worker('js/clock-worker.js');
+        clockWorker.onmessage = advanceSimulation;
+        clockWorker.onerror = () => {
+            clockWorker?.terminate(); clockWorker = null;
+            if (!fallbackHeartbeat) fallbackHeartbeat = setInterval(advanceSimulation, 50);
+        };
+        clockWorker.postMessage('start');
+    } catch {
+        fallbackHeartbeat = setInterval(advanceSimulation, 50);
     }
+    animationId = requestAnimationFrame(runLoop);
 }
 
 function stopSimLoop() {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-    }
-    if (backgroundIntervalId) {
-        clearInterval(backgroundIntervalId);
-        backgroundIntervalId = null;
-    }
-    resetFrameTiming();
+    if (animationId !== null) cancelAnimationFrame(animationId);
+    animationId = null;
+    clockWorker?.terminate(); clockWorker = null;
+    if (fallbackHeartbeat !== null) clearInterval(fallbackHeartbeat);
+    fallbackHeartbeat = null;
+    simulationClock.stop();
 }
 
-function startBackgroundLoop() {
-    if (backgroundIntervalId) return;
-    lastTime = performance.now();
-    backgroundIntervalId = setInterval(() => {
-        if (!simulator || !simulator.running) {
-            clearInterval(backgroundIntervalId);
-            backgroundIntervalId = null;
-            return;
-        }
-        advanceSimulationClock(performance.now());
-    }, 25);
-}
-
-// Handle visibility change to switch between RAF and setInterval
 document.addEventListener('visibilitychange', () => {
     if (!simulator || !simulator.running) return;
-
-    if (document.hidden) {
-        // Tab became hidden - switch to setInterval
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-        startBackgroundLoop();
-    } else {
-        // Tab became visible - switch to requestAnimationFrame
-        if (backgroundIntervalId) {
-            clearInterval(backgroundIntervalId);
-            backgroundIntervalId = null;
-        }
-        resetFrameTiming();
-        simulator.updateStats(true);
-        simulator.render();
-        animationId = requestAnimationFrame(runLoop);
-    }
+    advanceSimulation();
+    if (animationId !== null) cancelAnimationFrame(animationId);
+    animationId = document.hidden ? null : requestAnimationFrame(runLoop);
+    if (!document.hidden) { simulator.updateStats(true); simulator.render(); }
 });
 
 function step() {
@@ -928,21 +913,8 @@ function toggleGrid() {
     simulator.render();
 }
 
-function runLoop(timestamp) {
+function runLoop() {
     if (!simulator || !simulator.running) return;
-    advanceSimulationClock(timestamp);
+    advanceSimulation();
     animationId = requestAnimationFrame(runLoop);
-}
-
-function advanceSimulationClock(timestamp) {
-    if (lastTime === 0) lastTime = timestamp;
-    const elapsed = Math.max(0, timestamp - lastTime);
-    lastTime = timestamp;
-    // Retain fractional ticks, but cap overdue work so resuming a throttled tab stays responsive.
-    stepAccumulator = Math.min(stepAccumulator + elapsed * simulator.speed / 1000, 32);
-    const steps = Math.min(8, Math.floor(stepAccumulator));
-    if (steps > 0) {
-        stepAccumulator -= steps;
-        simulator.stepBatch(steps);
-    }
 }

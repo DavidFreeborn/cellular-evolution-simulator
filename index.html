@@ -26,15 +26,21 @@
 .tool-page :is(button,select,summary) { min-height:36px; }
 .tool-page h1 { font-family:var(--tool-serif); font-size:32px; line-height:1.2; font-weight:500; letter-spacing:normal; }
 .tool-page :is(h2,h3) { font-family:var(--tool-serif); }
-.tool-page :is(a,button,input,select,textarea,summary,[tabindex]):focus-visible { outline:2px solid currentColor!important; outline-offset:3px; }
-.tool-page .tool-methodology { max-width:72ch; margin:24px auto; padding:16px; border-top:1px solid #bbb; font:17px/1.55 var(--tool-serif); }
-.tool-methodology summary { cursor:pointer; font-weight:600; }
-.tool-methodology h3 { margin:18px 0 6px; font-size:22px; }
-.tool-methodology p { margin:8px 0; }
+.tool-page :is(a,button,input,select,textarea,summary,[tabindex]):focus-visible { outline:2px solid #222!important; outline-offset:3px; box-shadow:0 0 0 3px #fff!important; }
+.tool-page .tool-methodology { box-sizing:border-box; grid-column:1 / -1; width:100%; max-width:none; margin:24px 0 0; padding:16px 0; border:0; border-top:1px solid #bbb; border-radius:0; background:transparent; color:#222; font:18px/1.55 var(--tool-serif); text-align:left; }
+.tool-page .tool-methodology > summary { cursor:pointer; font:400 21px/1.4 var(--tool-serif)!important; letter-spacing:normal; text-transform:none; }
+.tool-page .tool-methodology h3 { margin:20px 0 6px; font:400 20px/1.4 var(--tool-serif); letter-spacing:normal; text-transform:none; }
+.tool-page .tool-methodology :is(p,li) { max-width:none; font:inherit; }
+.tool-page .tool-methodology p { margin:8px 0; }
+.tool-page .tool-methodology a { color:inherit; text-decoration:underline; text-underline-offset:3px; }
+.tool-page .tool-methodology .equation { overflow-x:auto; padding:10px 0; font-size:17px; }
+.tool-page .tool-methodology table { width:100%; border-collapse:collapse; font:inherit; }
+.tool-page .tool-methodology :is(th,td) { padding:8px; border-bottom:1px solid #ddd; text-align:left; font-weight:400; vertical-align:top; }
 @media(max-width:600px) { .tool-page :is(button,select,summary) { min-height:44px; } }
 @media(prefers-reduced-motion:reduce) { .tool-page *, .tool-page *::before, .tool-page *::after { scroll-behavior:auto!important; transition:none!important; } }
-
 /* Tool-specific styles */
+.tool-page #welcome-screen{max-width:1600px;border:0;margin:0 auto;padding:24px}.tool-page #welcome-screen h1{text-align:left;margin:0 0 12px}.evolution-intro{font:19px/1.5 var(--tool-serif);margin-bottom:20px}.tool-page .welcome-footer{justify-content:flex-start;border-top:1px solid #ccc;padding-top:16px}.evolution-notes{max-width:1600px;margin:0 auto;padding:0 24px 24px}.tool-page #simulation-screen{height:calc(100dvh - 48px);min-height:620px}.evolution-notes .cell-type-grid{font:14px/1.5 var(--tool-sans)}
+
 .tool-page #simulation-screen{height:calc(100dvh - 48px)}.tool-page .welcome-content{max-height:none;overflow:visible}.tool-page .toolbar{flex-wrap:wrap;gap:8px}.tool-page .toolbar-group{flex-wrap:wrap}.tool-page #welcome-screen h1{font-family:var(--tool-serif)}@media(max-width:700px){.tool-page #simulation-screen{height:auto;min-height:calc(100dvh - 48px);overflow:visible}.tool-page .main-content{display:flex;flex-direction:column;overflow:visible}.tool-page .canvas-container{min-height:420px}.tool-page .stats-panel{max-height:none;overflow:visible}}@media(max-width:1100px){.tool-page #simulation-screen{height:auto;overflow:visible}.tool-page .main-layout{display:flex;flex-direction:column;overflow:visible;min-width:0}.tool-page .center-panel{order:0;min-height:450px;width:100%}.tool-page .canvas-container{height:450px;max-height:450px;overflow:auto}.tool-page .right-panel{display:block;order:1;overflow:visible;width:100%}.tool-page .legend-panel{display:block;order:2;width:100%}.tool-page .top-toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center}.tool-page .top-toolbar .toolbar-divider{display:none}.tool-page .top-toolbar .control-group{flex-wrap:wrap}.tool-page .top-toolbar input[type=range]{max-width:100%}}
 @media(max-width:1100px){.tool-page .top-toolbar>.button-group,.tool-page .toolbar-title{grid-column:1/-1}.tool-page .top-toolbar>.button-group{flex-wrap:wrap}}
 @media(min-width:1101px) and (max-width:1600px){.tool-page #simulation-screen{height:auto;min-height:calc(100dvh - 48px);overflow:visible}}
@@ -48,90 +54,7 @@
 
         <h1>Cellular Evolution Simulator</h1>
 
-        <div class="welcome-content">
-            <h2>Welcome</h2>
-            <p>Watch multicellular life evolve through mutation, selection, crowding, predation, and changing energy conditions. The point is not to script behavior, but to build a world simple enough that useful strategies can discover themselves.</p>
-
-            <h2>Model and methodology</h2><p>This is an artificial-life model: its cell types, energy costs and mutation rules are designed abstractions, not measured biological parameters. A run illustrates outcomes under these assumptions; it does not predict real ecosystems. Random runs can diverge. <a href="https://github.com/DavidFreeborn/cellular-evolution-simulator">Source code and model rules</a>.</p><h3>How it works</h3>
-            <p>Multi-cellular organisms act and reproduce in a 224x224 grid world (50,176 cells of space). Each organism is composed of different cell types with unique functions:</p>
-
-            <div class="cell-type-grid">
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #7878FF;"></div>
-                    <div><strong>Muscle:</strong> Movement</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #78FF78;"></div>
-                    <div><strong>Photo:</strong> Photosynthesis</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #FF7878;"></div>
-                    <div><strong>Teeth:</strong> Eating living tissue and decay</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #78DCDC;"></div>
-                    <div><strong>Shield:</strong> Protection</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #FFA050;"></div>
-                    <div><strong>Nose:</strong> Smells nearby organisms</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #FFFF78;"></div>
-                    <div><strong>Eye:</strong> Detects cell types ahead and emitter signals</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #FFFFFF;"></div>
-                    <div><strong>Emitter:</strong> Broadcasts a signal from 0 to 1</div>
-                </div>
-                <div class="cell-type-item">
-                    <div class="cell-color-box" style="background: #966432;"></div>
-                    <div><strong>Decay:</strong> Dead cells</div>
-                </div>
-            </div>
-
-            <h2>Energy Economy</h2>
-            <ul>
-                <li><strong>Photosynthesis:</strong> Photo cells gain energy only in lit areas.</li>
-                <li><strong>Shade:</strong> Nearby photo cells compete in local 3x3 neighborhoods, so crowded photo patches are less efficient.</li>
-                <li><strong>Metabolism:</strong> Most body cells cost 0.05 energy per tick. Eyes and noses currently have zero baseline metabolism.</li>
-                <li><strong>Movement:</strong> Successful movement costs 0.31 energy per cargo cell. Muscles, eyes, noses, and emitters are treated as free to carry.</li>
-                <li><strong>Brain cost:</strong> Brains pay 0.0002 energy per node per tick, plus 0.005 per hidden layer.</li>
-                <li><strong>Teeth:</strong> Adjacent bites recover structural energy and some stored energy, but repeated living-organism kills are limited by a digestion cooldown.</li>
-                <li><strong>Reproduction:</strong> The parent pays 3 energy per child cell for construction plus 2.4 per child cell as a starting energy reserve, and must retain a 2-energy buffer. Reproduction can be requested by the brain or triggered automatically at high energy.</li>
-            </ul>
-
-            <h2>Sunlight Modes</h2>
-            <p>Sunlight changes the geography of photosynthesis. Static plant-like bodies thrive in different places depending on how much of the world is brightly lit and how often those lit zones shift.</p>
-            <ul>
-                <li><strong>Default:</strong> Sunlight is available everywhere.</li>
-                <li><strong>Central sunlight:</strong> Light is strongest in the center and gently falls off toward the edges instead of cutting off sharply.</li>
-                <li><strong>Refugia mode:</strong> The world alternates every 1000 ticks between uniform light and a concentrated refugia phase with five bright patches, each covering about 10% of the map.</li>
-            </ul>
-
-            <h2>Features</h2>
-            <ul>
-                <li><strong>Neural networks:</strong> Each organism carries a small feed-forward brain. Inputs depend on its body, but always include energy; outputs can drive reproduction, emitter intensity, and movement.</li>
-                <li><strong>Nose mechanics:</strong> Each nose scans a local 5x5 neighborhood and reports four directional density readings relative to facing: ahead, right, back, and left.</li>
-                <li><strong>Eye mechanics:</strong> Each eye reads the single cell directly ahead, with one input per cell type plus one input for emitter signal strength.</li>
-                <li><strong>Emitter mechanics:</strong> Emitters broadcast a 0-1 signal that eyes can detect, so they can evolve into simple signaling channels as well as environmental cues.</li>
-                <li><strong>Predation mechanics:</strong> Teeth bite automatically on contact, and movers get initiative after successful movement or rotation.</li>
-            </ul>
-
-            <h2>What To Watch For</h2>
-            <ul>
-                <li>Punctuated dynamics: relatively stable intervals interrupted by extinction pulses</li>
-                <li>Adaptive radiations and ecological reorganization following extinction events</li>
-                <li>Refugia potentially supporting higher biodiversity and longer coexistence</li>
-                <li>Oscillatory predator-prey dynamics, including overshoot, collapse, and transient shifts in trophic dominance</li>
-                <li>Coevolutionary arms races between predators, prey, and defensive forms</li>
-                <li>Attractor-like regimes in evolutionary space, with convergent evolution toward similar body plans in independent lineages</li>
-                <li>Historical contingency and path dependence, with different runs settling into different long-lived regimes</li>
-                <li>Possible evolution of sensory systems, especially noses and eyes, within mobile lineages</li>
-                <li>Possible evolution of signaling through emitters and signal-responsive eyes</li>
-                <li>Trade-offs between local specialists and generalists in variable sunlight regimes</li>
-            </ul>
-        </div>
+        <p class="evolution-intro">Explore how multicellular organisms evolve through mutation, competition, predation and changing sunlight.</p>
 
         <div class="welcome-footer">
             <label for="welcome-sunlight-mode">Sunlight mode:</label>
@@ -234,7 +157,6 @@
                 <div class="canvas-container" id="canvas-container">
                     <canvas role="img" aria-label="Simulation world; click an organism to inspect it" id="sim-canvas" width="768" height="768"></canvas>
                 </div>
-                <div class="canvas-hint">Tip: click any organism to inspect its body and neural network.</div>
             </div>
 
             <!-- Stats Panel (Right) -->
@@ -308,6 +230,80 @@
             </div>
         </div>
     </div>
+
+    <div class="evolution-notes"><details class="tool-methodology"><summary>Model and methodology</summary>
+<p>This is an artificial-life model: its cell types, energy costs and mutation rules are designed abstractions, not measured biological parameters. A run illustrates outcomes under these assumptions; it does not predict real ecosystems. Random runs can diverge. <a href="https://github.com/DavidFreeborn/cellular-evolution-simulator">Source code and model rules</a>.</p><h3>Organisms and cell types</h3>
+            <p>Multi-cellular organisms act and reproduce in a 224x224 grid world (50,176 cells of space). Each organism is composed of different cell types with unique functions:</p>
+
+            <div class="cell-type-grid">
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #7878FF;"></div>
+                    <div><strong>Muscle:</strong> Movement</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #78FF78;"></div>
+                    <div><strong>Photo:</strong> Photosynthesis</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FF7878;"></div>
+                    <div><strong>Teeth:</strong> Eating living tissue and decay</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #78DCDC;"></div>
+                    <div><strong>Shield:</strong> Protection</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFA050;"></div>
+                    <div><strong>Nose:</strong> Smells nearby organisms</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFFF78;"></div>
+                    <div><strong>Eye:</strong> Detects cell types ahead and emitter signals</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #FFFFFF;"></div>
+                    <div><strong>Emitter:</strong> Broadcasts a signal from 0 to 1</div>
+                </div>
+                <div class="cell-type-item">
+                    <div class="cell-color-box" style="background: #966432;"></div>
+                    <div><strong>Decay:</strong> Dead cells</div>
+                </div>
+            </div>
+
+            <h3>Energy Economy</h3>
+            <ul>
+                <li><strong>Photosynthesis:</strong> Photo cells gain energy only in lit areas.</li>
+                <li><strong>Shade:</strong> Nearby photo cells compete in local 3x3 neighborhoods, so crowded photo patches are less efficient.</li>
+                <li><strong>Metabolism:</strong> Most body cells cost 0.05 energy per tick. Eyes and noses currently have zero baseline metabolism.</li>
+                <li><strong>Movement:</strong> Successful movement costs 0.31 energy per cargo cell. Muscles, eyes, noses, and emitters are treated as free to carry.</li>
+                <li><strong>Brain cost:</strong> Brains pay 0.0002 energy per node per tick, plus 0.005 per hidden layer.</li>
+                <li><strong>Teeth:</strong> Adjacent bites recover structural energy and some stored energy, but repeated living-organism kills are limited by a digestion cooldown.</li>
+                <li><strong>Reproduction:</strong> The parent pays 3 energy per child cell for construction plus 2.4 per child cell as a starting energy reserve, and must retain a 2-energy buffer. Reproduction can be requested by the brain or triggered automatically at high energy.</li>
+            </ul>
+
+            <h3>Sunlight Modes</h3>
+            <p>Sunlight changes the geography of photosynthesis. Static plant-like bodies thrive in different places depending on how much of the world is brightly lit and how often those lit zones shift.</p>
+            <ul>
+                <li><strong>Default:</strong> Sunlight is available everywhere.</li>
+                <li><strong>Central sunlight:</strong> Light is strongest in the center and gently falls off toward the edges instead of cutting off sharply.</li>
+                <li><strong>Refugia mode:</strong> The world alternates every 1000 ticks between uniform light and a concentrated refugia phase with five bright patches, each covering about 10% of the map.</li>
+            </ul>
+
+            <h3>Features</h3>
+            <ul>
+                <li><strong>Neural networks:</strong> Each organism carries a small feed-forward brain. Inputs depend on its body, but always include energy; outputs can drive reproduction, emitter intensity, and movement.</li>
+                <li><strong>Nose mechanics:</strong> Each nose scans a local 5x5 neighborhood and reports four directional density readings relative to facing: ahead, right, back, and left.</li>
+                <li><strong>Eye mechanics:</strong> Each eye reads the single cell directly ahead, with one input per cell type plus one input for emitter signal strength.</li>
+                <li><strong>Emitter mechanics:</strong> Emitters broadcast a 0-1 signal that eyes can detect, so they can evolve into simple signaling channels as well as environmental cues.</li>
+                <li><strong>Predation mechanics:</strong> Teeth bite automatically on contact, and movers get initiative after successful movement or rotation.</li>
+            </ul>
+
+            <h3>Patterns in a run</h3>
+            <p>Populations may remain fairly steady for a time, then change sharply as organisms spread or die out. Compare runs to see whether similar body plans appear, or whether early mutations lead to lasting differences.</p>
+            <p>Try changing the sunlight pattern. Do organisms gather in the bright patches? Do mobile predators spread after their prey become abundant? Select an organism to inspect its cells and neural network. Eyes, noses and emitters may become useful in some conditions and remain rare in others.</p>
+            <p>These are possibilities to investigate, not outcomes guaranteed by the model. A rise in population alone does not establish greater diversity, and similar-looking bodies may behave differently.</p>
+
+    </details></div>
 
     <!-- Guide Modal -->
     <div id="guide-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="guide-title">
@@ -475,6 +471,7 @@
     <script src="js/world.js?v=20261007-correctness"></script>
     <script src="js/simulator.js?v=20261007-correctness"></script>
     <script src="js/main.js?v=20261007-correctness"></script>
-    <script src="js/ui.js?v=20261007-correctness"></script>
+    <script src="js/simulation-clock.js"></script>
+    <script src="js/ui.js?v=20261007-repair2"></script>
 </body>
 </html>

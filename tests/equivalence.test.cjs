@@ -27,15 +27,20 @@ test('reused movement buffers preserve bodies across blocked and successful move
     const beforeX=o.xs.slice(),beforeY=o.ys.slice();assert.equal(w.tryShiftOrg(o,1,0),false);
     assert.deepEqual(o.xs,beforeX);assert.deepEqual(o.ys,beforeY);w.owner[idx]=oldOwner;
 });
-function clockFixture(speed){const sim={speed,steps:0,stepBatch(n){this.steps+=n;}};
+function clockFixture(speed){const sim={running:true,speed,steps:0,stepBatch(n){this.steps+=n;}};
+    let now=1000;
+    const {SimulationClock}=require('../js/simulation-clock.js');
     const doc={addEventListener(){}};const source=fs.readFileSync(path.join(root,'js/ui.js'),'utf8');
-    const clock=new Function('document','simulator','CELL_PHOTO',source+'\nreturn {advanceSimulationClock};')(doc,sim,6);
-    return {sim,...clock};
+    const loop=source.slice(source.indexOf('// The simulation clock'),source.indexOf('function step()'));
+    const clock=new Function('document','simulator','SimulationClock','performance',loop+'\nreturn {advanceSimulation,simulationClock};')(doc,sim,SimulationClock,{now:()=>now});
+    clock.simulationClock.start(now,speed);
+    return {sim,advanceSimulationClock(timestamp){now=timestamp;clock.advanceSimulation();}};
 }
 test('foreground and background clocks honour 128 ticks/sec and bound catch-up work',()=>{
     for(const dt of [25,1000/60]){const f=clockFixture(128);f.advanceSimulationClock(1000);
         for(let i=1;i<=Math.round(1000/dt);i++)f.advanceSimulationClock(1000+i*dt);
         assert.ok(Math.abs(f.sim.steps-128)<=1);
-        const before=f.sim.steps;f.advanceSimulationClock(3600000);assert.ok(f.sim.steps-before<=8);
+        const before=f.sim.steps;f.advanceSimulationClock(3600000);assert.ok(f.sim.steps-before<=128);
+        const after=f.sim.steps;f.advanceSimulationClock(3600000);assert.equal(f.sim.steps-after,128);
     }
 });

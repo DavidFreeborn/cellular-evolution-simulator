@@ -5,7 +5,7 @@
 // Layer 0: input -> hidden1, Layer N-1: hiddenN -> output
 
 class MultiLayerBrain {
-    constructor(din, hiddenSizes, dout) {
+    constructor(din, hiddenSizes, dout, randomize = true) {
         this.din = din;
         this.dout = dout;
         this.hiddenSizes = hiddenSizes.slice();  // Array of hidden layer sizes
@@ -17,7 +17,7 @@ class MultiLayerBrain {
         for (let i = 0; i < hiddenSizes.length; i++) {
             const size = hiddenSizes[i];
             this.layers.push({
-                weights: this.randomMatrix(prevSize, size, 0.5),
+                weights: randomize ? this.randomMatrix(prevSize, size, 0.5) : new Float32Array(prevSize * size),
                 biases: new Float32Array(size),
                 size: size,
                 activations: new Float32Array(size)
@@ -27,7 +27,7 @@ class MultiLayerBrain {
 
         // Output layer
         this.layers.push({
-            weights: this.randomMatrix(prevSize, dout, 0.5),
+            weights: randomize ? this.randomMatrix(prevSize, dout, 0.5) : new Float32Array(prevSize * dout),
             biases: new Float32Array(dout),
             size: dout,
             activations: new Float32Array(dout)
@@ -39,13 +39,21 @@ class MultiLayerBrain {
             numNoses: layout.numNoses || 0,
             numSensors: layout.numSensors || 0,
             numEmitters: layout.numEmitters || 0,
-            hasMuscles: !!layout.hasMuscles
+            hasMuscles: !!layout.hasMuscles,
+            noseIds: layout.noseIds?.slice(),
+            sensorIds: layout.sensorIds?.slice(),
+            emitterIds: layout.emitterIds?.slice()
         } : null;
         return this;
     }
 
     cloneIOLayout() {
-        return this.ioLayout ? { ...this.ioLayout } : null;
+        return this.ioLayout ? {
+            ...this.ioLayout,
+            noseIds: this.ioLayout.noseIds?.slice(),
+            sensorIds: this.ioLayout.sensorIds?.slice(),
+            emitterIds: this.ioLayout.emitterIds?.slice()
+        } : null;
     }
 
     randomMatrix(rows, cols, scale) {
@@ -64,11 +72,12 @@ class MultiLayerBrain {
     static copyOverlapMutating(parentLayer, childLayer, parentPrevSize, childPrevSize) {
         const minPrev = Math.min(parentPrevSize, childPrevSize);
         const minSize = Math.min(parentLayer.size, childLayer.size);
+        const mutationProbability = Math.min(1, 0.05 * MUT_WEIGHT_SIGMA / 0.02);
 
         for (let i = 0; i < minPrev; i++) {
             for (let j = 0; j < minSize; j++) {
                 const oldVal = parentLayer.weights[i * parentLayer.size + j];
-                if (Math.random() < 0.05) {
+                if (Math.random() < mutationProbability) {
                     childLayer.weights[i * childLayer.size + j] = oldVal + MultiLayerBrain.sampleMutationDelta();
                 } else {
                     childLayer.weights[i * childLayer.size + j] = oldVal;
@@ -77,7 +86,7 @@ class MultiLayerBrain {
         }
 
         for (let i = 0; i < minSize; i++) {
-            if (Math.random() < 0.05) {
+            if (Math.random() < mutationProbability) {
                 childLayer.biases[i] = parentLayer.biases[i] + MultiLayerBrain.sampleMutationDelta();
             } else {
                 childLayer.biases[i] = parentLayer.biases[i];
@@ -154,81 +163,60 @@ class MultiLayerBrain {
     }
 
     getEnergyOnlyReproduce(inputValue) {
-        if (!this._energyOnlyReproduceLUT) {
-            const buckets = 256;
-            const lut = new Float32Array(buckets + 1);
-            const input = new Float32Array(1);
-            for (let i = 0; i <= buckets; i++) {
-                input[0] = i / buckets;
-                lut[i] = this.forward(input)[0];
-            }
-            this._energyOnlyReproduceLUT = lut;
+        // Exact evaluation: a quantised lookup can flip the reproduction threshold.
+        if (this.layers.length === 1) {
+            const layer = this.layers[0];
+            return Math.fround(Math.tanh(layer.biases[0] + inputValue * layer.weights[0]));
         }
+        if (!this._energyInput) this._energyInput = new Float32Array(1);
+        this._energyInput[0] = inputValue;
+        return this.forward(this._energyInput)[0];
+    }
 
-        const lut = this._energyOnlyReproduceLUT;
-        const maxIdx = lut.length - 1;
-        const idx = Math.max(0, Math.min(maxIdx, Math.round(inputValue * maxIdx)));
-        return lut[idx];
+    static channelPairs(oldIds, newIds, oldCount, newCount) {
+        if (oldIds && newIds) {
+            const positions = new Map(newIds.map((id, index) => [id, index]));
+            return oldIds.flatMap((id, index) => positions.has(id) ? [[index, positions.get(id)]] : []);
+        }
+        return Array.from({ length: Math.min(oldCount, newCount) }, (_, i) => [i, i]);
+    }
+
+    static sameIOLayout(a, b) {
+        if (!a || !b) return false;
+        for (const key of ['numNoses', 'numSensors', 'numEmitters', 'hasMuscles']) {
+            if (a[key] !== b[key]) return false;
+        }
+        return ['noseIds', 'sensorIds', 'emitterIds'].every(key =>
+            (!a[key] && !b[key]) || (a[key] && b[key] && a[key].length === b[key].length &&
+                a[key].every((id, index) => id === b[key][index])));
     }
 
     static buildInputIndexMap(oldLayout, newLayout) {
         if (!oldLayout || !newLayout) return null;
-
-        const map = [[0, 0]];  // Energy always stays first
-        const sharedNoses = Math.min(oldLayout.numNoses, newLayout.numNoses);
-        for (let nose = 0; nose < sharedNoses; nose++) {
-            const oldBase = 1 + nose * 4;
-            const newBase = 1 + nose * 4;
-            for (let j = 0; j < 4; j++) {
-                map.push([oldBase + j, newBase + j]);
-            }
+        const map = [[0, 0]];
+        for (const [oldNose, newNose] of this.channelPairs(oldLayout.noseIds, newLayout.noseIds,
+            oldLayout.numNoses, newLayout.numNoses)) {
+            for (let j = 0; j < 4; j++) map.push([1 + oldNose * 4 + j, 1 + newNose * 4 + j]);
         }
-
-        const sharedSensors = Math.min(oldLayout.numSensors, newLayout.numSensors);
-        const oldSensorBase = 1 + oldLayout.numNoses * 4;
-        const newSensorBase = 1 + newLayout.numNoses * 4;
-        for (let sensor = 0; sensor < sharedSensors; sensor++) {
-            const oldBase = oldSensorBase + sensor * SENSOR_INPUTS;
-            const newBase = newSensorBase + sensor * SENSOR_INPUTS;
+        for (const [oldEye, newEye] of this.channelPairs(oldLayout.sensorIds, newLayout.sensorIds,
+            oldLayout.numSensors, newLayout.numSensors)) {
             for (let j = 0; j < SENSOR_INPUTS; j++) {
-                map.push([oldBase + j, newBase + j]);
+                map.push([1 + oldLayout.numNoses * 4 + oldEye * SENSOR_INPUTS + j,
+                    1 + newLayout.numNoses * 4 + newEye * SENSOR_INPUTS + j]);
             }
         }
-
         return map;
     }
 
     static buildOutputIndexMap(oldBrain, newBrain) {
-        const oldLayout = oldBrain.ioLayout;
-        const newLayout = newBrain.ioLayout;
-        if (!oldLayout || !newLayout) return null;
-
-        const oldHasBiteOutput =
-            oldBrain.dout === 2 + oldLayout.numEmitters + (oldLayout.hasMuscles ? 4 : 0);
-        const newHasBiteOutput =
-            newBrain.dout === 2 + newLayout.numEmitters + (newLayout.hasMuscles ? 4 : 0);
-        const oldReproduceIdx = oldHasBiteOutput ? 1 : 0;
-        const newReproduceIdx = newHasBiteOutput ? 1 : 0;
-        const oldEmitterBase = oldReproduceIdx + 1;
-        const newEmitterBase = newReproduceIdx + 1;
-
-        const map = [
-            [oldReproduceIdx, newReproduceIdx]
-        ];
-
-        const sharedEmitters = Math.min(oldLayout.numEmitters, newLayout.numEmitters);
-        for (let emitter = 0; emitter < sharedEmitters; emitter++) {
-            map.push([oldEmitterBase + emitter, newEmitterBase + emitter]);
+        const a = oldBrain.ioLayout, b = newBrain.ioLayout;
+        if (!a || !b) return null;
+        const map = [[0, 0]];
+        for (const [oldEmitter, newEmitter] of this.channelPairs(a.emitterIds, b.emitterIds,
+            a.numEmitters, b.numEmitters)) map.push([1 + oldEmitter, 1 + newEmitter]);
+        if (a.hasMuscles && b.hasMuscles) {
+            for (let j = 0; j < 4; j++) map.push([oldBrain.dout - 4 + j, newBrain.dout - 4 + j]);
         }
-
-        if (oldLayout.hasMuscles && newLayout.hasMuscles) {
-            const oldMoveBase = oldBrain.dout - 4;
-            const newMoveBase = newBrain.dout - 4;
-            for (let j = 0; j < 4; j++) {
-                map.push([oldMoveBase + j, newMoveBase + j]);
-            }
-        }
-
         return map;
     }
 
@@ -250,99 +238,72 @@ class MultiLayerBrain {
         }
     }
 
-    // Resize for new input/output dimensions (when body changes)
+    // Map both axes together when the first and last layers are the same matrix.
     static resizeIO(oldBrain, newDims) {
-        const newBrain = new MultiLayerBrain(newDims.inputs, oldBrain.hiddenSizes, newDims.outputs)
+        const child = new MultiLayerBrain(newDims.inputs, oldBrain.hiddenSizes, newDims.outputs, false)
             .setIOLayout(newDims);
+        const inputMap = this.buildInputIndexMap(oldBrain.ioLayout, child.ioLayout) ||
+            Array.from({ length: Math.min(oldBrain.din, child.din) }, (_, i) => [i, i]);
+        const outputMap = this.buildOutputIndexMap(oldBrain, child) ||
+            Array.from({ length: Math.min(oldBrain.dout, child.dout) }, (_, i) => [i, i]);
+        const mappedInputs = new Set(inputMap.map(pair => pair[1]));
+        const mappedOutputs = new Set(outputMap.map(pair => pair[1]));
+        const first = child.layers[0], oldFirst = oldBrain.layers[0];
+        first.weights.fill(0);
+        const firstOutputs = oldBrain.hiddenSizes.length ?
+            Array.from({ length: first.size }, (_, i) => [i, i]) : outputMap;
+        for (const [oldIn, newIn] of inputMap) {
+            for (const [oldOut, newOut] of firstOutputs) {
+                first.weights[newIn * first.size + newOut] = oldFirst.weights[oldIn * oldFirst.size + oldOut];
+            }
+        }
+        for (let i = 0; i < child.din; i++) {
+            if (mappedInputs.has(i)) continue;
+            for (let j = 0; j < first.size; j++) first.weights[i * first.size + j] = (Math.random() - .5) * .1;
+        }
+        for (const [oldOut, newOut] of firstOutputs) first.biases[newOut] = oldFirst.biases[oldOut];
+        if (oldBrain.hiddenSizes.length) {
+            for (let l = 1; l < child.layers.length - 1; l++) this.copyLayerInto(oldBrain.layers[l], child.layers[l]);
+            const last = child.layers.at(-1), oldLast = oldBrain.layers.at(-1);
+            last.weights.fill(0);
+            const width = oldBrain.hiddenSizes.at(-1);
+            for (const [oldOut, newOut] of outputMap) {
+                for (let i = 0; i < width; i++) last.weights[i * last.size + newOut] = oldLast.weights[i * oldLast.size + oldOut];
+                last.biases[newOut] = oldLast.biases[oldOut];
+            }
+        }
+        this.applyDefaultOutputBiases(child, mappedOutputs);
+        return child;
+    }
 
-        // Copy first-layer weights using semantic input positions rather than raw indices.
-        if (oldBrain.layers.length > 0 && newBrain.layers.length > 0) {
-            const oldL = oldBrain.layers[0];
-            const newL = newBrain.layers[0];
-            const minOut = Math.min(oldL.size, newL.size);
-            const inputMap = MultiLayerBrain.buildInputIndexMap(oldBrain.ioLayout, newBrain.ioLayout);
-            const mappedNewInputs = new Set();
-
-            newL.weights.fill(0);
-
-            if (inputMap) {
-                for (const [oldIdx, newIdx] of inputMap) {
-                    if (oldIdx >= oldBrain.din || newIdx >= newBrain.din) continue;
-                    mappedNewInputs.add(newIdx);
-                    for (let j = 0; j < minOut; j++) {
-                        newL.weights[newIdx * newL.size + j] = oldL.weights[oldIdx * oldL.size + j];
+    removeHiddenLayer(index) {
+        const sizes = this.hiddenSizes.slice();
+        sizes.splice(index, 1);
+        const child = new MultiLayerBrain(this.din, sizes, this.dout, false).setIOLayout(this.ioLayout);
+        for (let l = 0; l < child.layers.length; l++) {
+            if (l !== index) {
+                MultiLayerBrain.copyLayerInto(this.layers[l < index ? l : l + 1], child.layers[l]);
+                continue;
+            }
+            // Compose a local linearisation of the removed tanh layer at zero input.
+            // Exact equivalence is impossible in general; unaffected layers retain their parameters.
+            const incoming = this.layers[index], outgoing = this.layers[index + 1], bridge = child.layers[l];
+            const width = index === 0 ? this.din : this.hiddenSizes[index - 1];
+            bridge.weights.fill(0);
+            bridge.biases.set(outgoing.biases);
+            for (let k = 0; k < incoming.size; k++) {
+                const activation = Math.tanh(incoming.biases[k]);
+                const slope = 1 - activation * activation;
+                for (let j = 0; j < outgoing.size; j++) {
+                    const weight = outgoing.weights[k * outgoing.size + j];
+                    bridge.biases[j] += activation * weight;
+                    for (let i = 0; i < width; i++) {
+                        bridge.weights[i * bridge.size + j] += incoming.weights[i * incoming.size + k] * slope * weight;
                     }
                 }
-            } else {
-                const minIn = Math.min(oldBrain.din, newBrain.din);
-                for (let i = 0; i < minIn; i++) {
-                    mappedNewInputs.add(i);
-                    for (let j = 0; j < minOut; j++) {
-                        newL.weights[i * newL.size + j] = oldL.weights[i * oldL.size + j];
-                    }
-                }
-            }
-
-            // Give brand-new sensory channels a weak initial influence instead of starting inert.
-            for (let i = 0; i < newBrain.din; i++) {
-                if (mappedNewInputs.has(i)) continue;
-                for (let j = 0; j < minOut; j++) {
-                    newL.weights[i * newL.size + j] = (Math.random() - 0.5) * 0.1;
-                }
-            }
-
-            for (let i = 0; i < minOut; i++) {
-                newL.biases[i] = oldL.biases[i];
             }
         }
-
-        // Copy middle layers entirely.
-        for (let l = 1; l < oldBrain.layers.length - 1 && l < newBrain.layers.length - 1; l++) {
-            newBrain.layers[l] = {
-                weights: oldBrain.layers[l].weights.slice(),
-                biases: oldBrain.layers[l].biases.slice(),
-                size: oldBrain.layers[l].size,
-                activations: new Float32Array(oldBrain.layers[l].size)
-            };
-        }
-
-        // Copy last-layer weights using semantic output positions.
-        const oldLast = oldBrain.layers[oldBrain.layers.length - 1];
-        const newLast = newBrain.layers[newBrain.layers.length - 1];
-        const prevSize = oldBrain.hiddenSizes.length > 0 ?
-            oldBrain.hiddenSizes[oldBrain.hiddenSizes.length - 1] : oldBrain.din;
-        const newPrevSize = newBrain.hiddenSizes.length > 0 ?
-            newBrain.hiddenSizes[newBrain.hiddenSizes.length - 1] : newBrain.din;
-        const minPrev = Math.min(prevSize, newPrevSize);
-        const outputMap = MultiLayerBrain.buildOutputIndexMap(oldBrain, newBrain);
-        const mappedNewOutputs = new Set();
-
-        newLast.weights.fill(0);
-
-        if (outputMap) {
-            for (const [oldIdx, newIdx] of outputMap) {
-                if (oldIdx >= oldBrain.dout || newIdx >= newBrain.dout) continue;
-                mappedNewOutputs.add(newIdx);
-                for (let i = 0; i < minPrev; i++) {
-                    newLast.weights[i * newLast.size + newIdx] = oldLast.weights[i * oldLast.size + oldIdx];
-                }
-                newLast.biases[newIdx] = oldLast.biases[oldIdx];
-            }
-        } else {
-            const minOut = Math.min(oldBrain.dout, newBrain.dout);
-            for (let i = 0; i < minPrev; i++) {
-                for (let j = 0; j < minOut; j++) {
-                    newLast.weights[i * newLast.size + j] = oldLast.weights[i * oldLast.size + j];
-                    mappedNewOutputs.add(j);
-                }
-            }
-            for (let i = 0; i < minOut; i++) {
-                newLast.biases[i] = oldLast.biases[i];
-            }
-        }
-
-        MultiLayerBrain.applyDefaultOutputBiases(newBrain, mappedNewOutputs);
-        return newBrain;
+        return child;
     }
 
     cloneMutate() {
@@ -359,10 +320,8 @@ class MultiLayerBrain {
             const newSize = insertIdx === 0 ? this.din : newHiddenSizes[insertIdx - 1];
             newHiddenSizes.splice(insertIdx, 0, newSize);
             insertedLayerIdx = insertIdx;
-        } else if (newHiddenSizes.length > 1 && Math.random() < 0.003 * structScale) {
-            // Remove hidden layer (very rare: 0.3%, only if >1 layer)
-            const removeIdx = Math.floor(Math.random() * newHiddenSizes.length);
-            newHiddenSizes.splice(removeIdx, 1);
+        } else if (newHiddenSizes.length > 0 && Math.random() < 0.003 * structScale) {
+            return this.removeHiddenLayer(Math.floor(Math.random() * newHiddenSizes.length));
         }
 
         // Add node to random layer (2%)
@@ -380,7 +339,9 @@ class MultiLayerBrain {
         }
 
         // Create new brain with potentially modified structure
-        const child = new MultiLayerBrain(this.din, newHiddenSizes, this.dout);
+        const shapeChanged = newHiddenSizes.length !== this.hiddenSizes.length ||
+            newHiddenSizes.some((size, i) => size !== this.hiddenSizes[i]);
+        const child = new MultiLayerBrain(this.din, newHiddenSizes, this.dout, shapeChanged && insertedLayerIdx === -1);
         child.setIOLayout(this.cloneIOLayout());
 
         if (insertedLayerIdx !== -1) {

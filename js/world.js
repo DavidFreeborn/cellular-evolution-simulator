@@ -27,7 +27,10 @@ class World {
         this._refugiaPatches = [];
         this._tickOrganisms = [];
         this._deadOrganisms = [];
-        this._biteMark = 0;
+        this._biteOrder = [];
+        this.onBirth = null;
+        this._wrapOffsets = Array.from({ length: 5 }, (_, i) =>
+            Int16Array.from({ length: size }, (_, v) => this.wrap(v + i - 2)));
         this.rebuildSunlightMap();
     }
 
@@ -186,15 +189,6 @@ class World {
         };
     }
 
-    torusDistanceSq(ax, ay, bx, by) {
-        const size = this.size;
-        let dx = Math.abs(ax - bx);
-        let dy = Math.abs(ay - by);
-        dx = Math.min(dx, size - dx);
-        dy = Math.min(dy, size - dy);
-        return dx * dx + dy * dy;
-    }
-
     getRefugiaPatches(phase) {
         const rng = this.createSeededRng((phase + 1) * 2654435761);
         const size = this.size;
@@ -235,10 +229,10 @@ class World {
 
     updatePhotoNeighborhood(x, y, delta) {
         for (let dy = -1; dy <= 1; dy++) {
-            const ny = this.wrap(y + dy);
+            const ny = this._wrapOffsets[dy + 2][y];
             const rowOffset = ny * this.size;
             for (let dx = -1; dx <= 1; dx++) {
-                const nx = this.wrap(x + dx);
+                const nx = this._wrapOffsets[dx + 2][x];
                 this.photoNeighborCounts[rowOffset + nx] += delta;
             }
         }
@@ -260,23 +254,23 @@ class World {
         }
     }
 
-    placeCells(oid, xs, ys, ts) {
+    canPlaceCells(xs, ys, ignoredOwner = -1) {
         for (let i = 0; i < xs.length; i++) {
-            const idx = this.getIdx(xs[i], ys[i]);
-            if (this.owner[idx] !== -1) {
-                return false;
-            }
+            const owner = this.owner[this.getIdx(xs[i], ys[i])];
+            if (owner !== -1 && owner !== ignoredOwner) return false;
         }
+        return true;
+    }
 
+    placeCells(oid, xs, ys, ts) {
+        if (!this.canPlaceCells(xs, ys)) return false;
         for (let i = 0; i < xs.length; i++) {
             const idx = this.getIdx(xs[i], ys[i]);
+            if (this.ctype[idx] === CELL_DECAY) this.corpseTracker.removeCorpse(idx);
             this.owner[idx] = oid;
             this.ctype[idx] = ts[i];
-            if (ts[i] === CELL_PHOTO) {
-                this.updatePhotoNeighborhood(xs[i], ys[i], 1);
-            }
+            if (ts[i] === CELL_PHOTO) this.updatePhotoNeighborhood(xs[i], ys[i], 1);
         }
-
         return true;
     }
 
@@ -367,7 +361,8 @@ class World {
             tc[CELL_SENSOR] === 0 &&
             (tc[CELL_NOSE] || 0) === 0 &&
             org.brain.din === 1 &&
-            org.brain.dout === 2;
+            org.brain.dout === 1;
+        org.brain.setIOLayout(calculateNNDimensions(tc, org.ts, org.cellIds));
 
         // Initialize emitSignals array (one per emitter cell)
         const numEmitters = tc[CELL_EMIT];
@@ -376,7 +371,15 @@ class World {
         }
     }
 
+    isValidTemplate(body) {
+        if (!Array.isArray(body) || body.length < MIN_CELLS || body.length > MAX_CELLS) return false;
+        if (!body.every(cell => Array.isArray(cell) && Number.isInteger(cell[0]) &&
+            Number.isInteger(cell[1]) && SIG_TYPES.includes(cell[2]))) return false;
+        return this.isContiguous(body.map(c => c[0]), body.map(c => c[1]));
+    }
+
     addOrganism(bodyTemplate, energy, brain) {
+        if (!this.isValidTemplate(bodyTemplate)) return null;
         const oid = this.nextId++;
 
         // Generate random facing direction
@@ -486,113 +489,20 @@ class World {
     // Nose sensing: writes 4 floats for density of organic matter in each relative direction
     // [ahead, right, behind, left] relative to organism's facing
     senseNoseInto(org, noseX, noseY, ownCells, targetArray, offset) {
-        const size = this.size;
-        let totalForward = 0, occupiedForward = 0;
-        let totalLeft = 0, occupiedLeft = 0;
-        let totalRight = 0, occupiedRight = 0;
-        let totalBack = 0, occupiedBack = 0;
-
-        for (let oy = -NOSE_GRID_RADIUS; oy <= NOSE_GRID_RADIUS; oy++) {
-            for (let ox = -NOSE_GRID_RADIUS; ox <= NOSE_GRID_RADIUS; ox++) {
-                if (ox === 0 && oy === 0) continue;
-
-                const localX = ox;
-                const localY = oy;
-                const worldDx = localX * SENSE_XX[org.facing] + localY * SENSE_XY[org.facing];
-                const worldDy = localX * SENSE_YX[org.facing] + localY * SENSE_YY[org.facing];
-                const tx = this.wrap(noseX + worldDx);
-                const ty = this.wrap(noseY + worldDy);
-                const idx = ty * size + tx;
-                const occupied = !ownCells.has(idx) && this.ctype[idx] !== CELL_EMPTY;
-
-                if (oy < 0 && ox <= 1) {
-                    totalForward++;
-                    if (occupied) occupiedForward++;
-                }
-                if (ox < 0 && oy >= -1) {
-                    totalLeft++;
-                    if (occupied) occupiedLeft++;
-                }
-                if (ox > 0 && oy <= 1) {
-                    totalRight++;
-                    if (occupied) occupiedRight++;
-                }
-                if (oy > 0 && ox >= -1) {
-                    totalBack++;
-                    if (occupied) occupiedBack++;
-                }
-            }
+        let ahead = 0, right = 0, back = 0, left = 0;
+        const wraps = this._wrapOffsets;
+        for (const cell of NOSE_STENCILS[org.facing]) {
+            const idx = wraps[cell.dy + 2][noseY] * this.size + wraps[cell.dx + 2][noseX];
+            if (this.ctype[idx] === CELL_EMPTY || this.owner[idx] === org.id) continue;
+            if (cell.mask & 1) ahead++;
+            if (cell.mask & 2) right++;
+            if (cell.mask & 4) back++;
+            if (cell.mask & 8) left++;
         }
-
-        targetArray[offset] = totalForward > 0 ? occupiedForward / totalForward : 0;
-        targetArray[offset + 1] = totalRight > 0 ? occupiedRight / totalRight : 0;
-        targetArray[offset + 2] = totalBack > 0 ? occupiedBack / totalBack : 0;
-        targetArray[offset + 3] = totalLeft > 0 ? occupiedLeft / totalLeft : 0;
-    }
-
-    // Nose sensing: returns 4 floats for density of organic matter in each relative direction
-    // [ahead, right, behind, left] relative to organism's facing
-    senseNose(org, noseX, noseY, ownCells) {
-        const result = new Float32Array(4);
-        this.senseNoseInto(org, noseX, noseY, ownCells, result, 0);
-        return result;
-    }
-
-    isBlocked(sensorX, sensorY, targetX, targetY, ownCells) {
-        // Line-of-sight check on toroidal grid using Bresenham-style grid stepping
-        // This avoids rounding artifacts and directional bias
-        if (sensorX === targetX && sensorY === targetY) return false;
-
-        const size = this.size;
-        const halfSize = size / 2;
-
-        // Calculate shortest path dx/dy considering wraparound
-        let dx = targetX - sensorX;
-        let dy = targetY - sensorY;
-
-        // Adjust for wraparound (take shorter path across boundary if applicable)
-        if (dx > halfSize) dx -= size;
-        else if (dx < -halfSize) dx += size;
-        if (dy > halfSize) dy -= size;
-        else if (dy < -halfSize) dy += size;
-
-        // Bresenham-style line stepping (no floating point, no rounding bias)
-        const absDx = Math.abs(dx);
-        const absDy = Math.abs(dy);
-        const sx = dx > 0 ? 1 : -1;  // Step direction x
-        const sy = dy > 0 ? 1 : -1;  // Step direction y
-
-        let x = sensorX;
-        let y = sensorY;
-        let err = absDx - absDy;
-
-        // Step through all cells between sensor and target (exclusive of both endpoints)
-        const totalSteps = absDx + absDy;
-        for (let step = 0; step < totalSteps; step++) {
-            const e2 = 2 * err;
-
-            if (e2 > -absDy) {
-                err -= absDy;
-                x += sx;
-            }
-            if (e2 < absDx) {
-                err += absDx;
-                y += sy;
-            }
-
-            // Wrap coordinates for torus
-            const checkX = this.wrap(x);
-            const checkY = this.wrap(y);
-
-            // Stop before reaching target
-            if (checkX === targetX && checkY === targetY) break;
-
-            if (ownCells.has(checkY * size + checkX)) {
-                return true;  // Blocked by own body
-            }
-        }
-
-        return false;
+        targetArray[offset] = ahead / 8;
+        targetArray[offset + 1] = right / 8;
+        targetArray[offset + 2] = back / 8;
+        targetArray[offset + 3] = left / 8;
     }
 
     getEmitterIndex(org, x, y) {
@@ -602,6 +512,7 @@ class World {
     }
 
     consumeBiteTarget(org, tx, ty, stats) {
+        if (this.organisms.get(org.id) !== org) return false;
         const tidx = this.getIdx(tx, ty);
         const ct = this.ctype[tidx];
         const targetOwner = this.owner[tidx];
@@ -652,7 +563,8 @@ class World {
         return false;
     }
 
-    tryContactBite(org, stats, biteMark) {
+    tryContactBite(org, stats) {
+        if (this.organisms.get(org.id) !== org) return false;
         if (org.mouthIdx.length === 0 || org._digestCooldown > 0) return false;
 
         const mouthStart = org.mouthIdx.length > 1 ? Math.floor(Math.random() * org.mouthIdx.length) : 0;
@@ -669,9 +581,6 @@ class World {
                 const ty = this.wrap(mouthY + CONTACT_DY[dir]);
 
                 if (this.consumeBiteTarget(org, tx, ty, stats)) {
-                    if (biteMark !== undefined) {
-                        org._lastAutoBiteMark = biteMark;
-                    }
                     return true;
                 }
             }
@@ -680,58 +589,31 @@ class World {
         return false;
     }
 
-    autoBiteContact(stats) {
-        const biteMark = ++this._biteMark;
-        const movedFirst = [];
-        const stationary = [];
-
-        for (const org of this.organisms.values()) {
-            if (org._lastAutoBiteMark === biteMark || org.mouthIdx.length === 0) continue;
-            if (org._movedRecently) {
-                movedFirst.push(org);
-            } else {
-                stationary.push(org);
-            }
-        }
-
-        for (const org of movedFirst) {
-            this.tryContactBite(org, stats, biteMark);
-        }
-        for (const org of stationary) {
-            this.tryContactBite(org, stats, biteMark);
+    shuffleOrganisms(orgs) {
+        for (let i = orgs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [orgs[i], orgs[j]] = [orgs[j], orgs[i]];
         }
     }
 
-    removeCellFromOrg(org, x, y) {
-        let idx = -1;
-        for (let i = 0; i < org.xs.length; i++) {
-            if (org.xs[i] === x && org.ys[i] === y) {
-                idx = i;
-                break;
+    autoBiteContact(stats, order) {
+        if (!order) {
+            order = this._biteOrder;
+            order.length = 0;
+            for (const org of this.organisms.values()) order.push(org);
+            this.shuffleOrganisms(order);
+        }
+        // Preserve movement initiative, with fair ordering inside each group.
+        for (const moved of [true, false]) {
+            for (const org of order) {
+                if (!!org._movedRecently === moved) this.tryContactBite(org, stats);
             }
-        }
-
-        if (idx === -1) return;
-
-        const last = org.xs.length - 1;
-        if (idx !== last) {
-            org.xs[idx] = org.xs[last];
-            org.ys[idx] = org.ys[last];
-            org.ts[idx] = org.ts[last];
-        }
-
-        org.xs = org.xs.slice(0, -1);
-        org.ys = org.ys.slice(0, -1);
-        org.ts = org.ts.slice(0, -1);
-
-        if (org.xs.length > 0) {
-            this.initCaches(org);
         }
     }
 
     tryShiftOrg(org, sx, sy) {
-        const xs = new Int16Array(org.xs.length);
-        const ys = new Int16Array(org.ys.length);
+        const xs = org._moveXs || (org._moveXs = new Int16Array(org.xs.length));
+        const ys = org._moveYs || (org._moveYs = new Int16Array(org.ys.length));
 
         for (let i = 0; i < org.xs.length; i++) {
             xs[i] = this.wrap(org.xs[i] + sx);
@@ -749,6 +631,7 @@ class World {
         this.clearCells(org.id);
         for (let i = 0; i < xs.length; i++) {
             const idx = this.getIdx(xs[i], ys[i]);
+            if (this.ctype[idx] === CELL_DECAY) this.corpseTracker.removeCorpse(idx);
             this.owner[idx] = org.id;
             this.ctype[idx] = org.ts[i];
             if (org.ts[i] === CELL_PHOTO) {
@@ -756,6 +639,8 @@ class World {
             }
         }
 
+        org._moveXs = org.xs;
+        org._moveYs = org.ys;
         org.xs = xs;
         org.ys = ys;
         org.cx = this.wrap(org.cx + sx);
@@ -803,8 +688,8 @@ class World {
         // Rotate all cells 90° around the organism's center
         const cx = org.cx;
         const cy = org.cy;
-        const xs = new Int16Array(org.xs.length);
-        const ys = new Int16Array(org.ys.length);
+        const xs = org._moveXs || (org._moveXs = new Int16Array(org.xs.length));
+        const ys = org._moveYs || (org._moveYs = new Int16Array(org.ys.length));
 
         for (let i = 0; i < org.xs.length; i++) {
             const dx = org.xs[i] - cx;
@@ -834,6 +719,7 @@ class World {
         this.clearCells(org.id);
         for (let i = 0; i < xs.length; i++) {
             const idx = this.getIdx(xs[i], ys[i]);
+            if (this.ctype[idx] === CELL_DECAY) this.corpseTracker.removeCorpse(idx);
             this.owner[idx] = org.id;
             this.ctype[idx] = org.ts[i];
             if (org.ts[i] === CELL_PHOTO) {
@@ -841,6 +727,8 @@ class World {
             }
         }
 
+        org._moveXs = org.xs;
+        org._moveYs = org.ys;
         org.xs = xs;
         org.ys = ys;
         // Center stays the same for rotation
@@ -907,12 +795,13 @@ class World {
         return visited.size === xs.length;
     }
 
-    mutateBody(xs, ys, ts) {
+    mutateBody(xs, ys, ts, cellIds = Array.from(ts, (_, i) => i)) {
         // Try multiple times to get a valid contiguous mutation
         for (let attempt = 0; attempt < 10; attempt++) {
             let mxs = Array.from(xs);
             let mys = Array.from(ys);
             let mts = Array.from(ts);
+            const ids = Array.from(cellIds);
             let n = mxs.length;
 
             if (n < MAX_CELLS && Math.random() < MUT_ADD_CELL_P) {
@@ -923,6 +812,7 @@ class World {
                 mxs.push(mxs[i] + dx);
                 mys.push(mys[i] + dy);
                 mts.push(tnew);
+                ids.push(Math.max(...cellIds) + 1);
                 n++;
             }
 
@@ -941,6 +831,7 @@ class World {
                     mxs.splice(j, 1);
                     mys.splice(j, 1);
                     mts.splice(j, 1);
+                    ids.splice(j, 1);
                     n--;
                 }
             }
@@ -963,25 +854,27 @@ class World {
             const uniqueXs = [];
             const uniqueYs = [];
             const uniqueTs = [];
+            const uniqueIds = [];
 
             for (let i = 0; i < mxs.length; i++) {
-                const key = `${mxs[i]},${mys[i]}`;
+                const key = this.wrap(mys[i]) * this.size + this.wrap(mxs[i]);
                 if (!seen.has(key)) {
                     seen.add(key);
                     uniqueXs.push(mxs[i]);
                     uniqueYs.push(mys[i]);
                     uniqueTs.push(mts[i]);
+                    uniqueIds.push(ids[i]);
                 }
             }
 
             // Check if result is contiguous
-            if (this.isContiguous(uniqueXs, uniqueYs) && uniqueXs.length > 0) {
-                return [uniqueXs, uniqueYs, uniqueTs];
+            if (uniqueXs.length >= MIN_CELLS && uniqueXs.length <= MAX_CELLS && this.isContiguous(uniqueXs, uniqueYs)) {
+                return [uniqueXs, uniqueYs, uniqueTs, uniqueIds];
             }
         }
 
         // If all attempts failed, return unchanged organism
-        return [Array.from(xs), Array.from(ys), Array.from(ts)];
+        return [Array.from(xs), Array.from(ys), Array.from(ts), Array.from(cellIds)];
     }
 
     // Rotate coordinates around origin by a number of 90° clockwise steps
@@ -1008,12 +901,8 @@ class World {
         const n = org.xs.length;
         if (n < MIN_CELLS) return false;
 
-        const cost = REPRO_COST_PER_CELL * n;
-        // Need enough energy for reproduction + small buffer
-        if (org.energy < cost + 2) return false;
-
-        // Reserve child ID first to prevent orphaned cells if anything fails partway
-        const cid = this.nextId++;
+        // Cheap lower bound before trying a mutation; final affordability uses the actual child.
+        if (org.energy < REPRO_COST_PER_CELL * MIN_CELLS * (1 + OFFSPRING_RESERVE_FRACTION) + 2) return false;
 
         // Torus-aware centroid calculation for normalizing child body shape
         const anchorX = org.xs[0];
@@ -1050,7 +939,12 @@ class World {
         }
         const rt = Array.from(org.ts);
 
-        const [mx, my, mt] = this.mutateBody(rx, ry, rt);
+        const [mx, my, mt, childIds] = this.mutateBody(rx, ry, rt, org.cellIds);
+        if (mt.length < MIN_CELLS || mt.length > MAX_CELLS) return false;
+        const constructionCost = REPRO_COST_PER_CELL * mt.length;
+        const childEnergy = constructionCost * OFFSPRING_RESERVE_FRACTION;
+        const cost = constructionCost + childEnergy;
+        if (org.energy < cost + 2) return false;
 
         // Determine child's facing - 20% chance of random, otherwise inherit
         const childFacing = Math.random() < 0.2 ? Math.floor(Math.random() * 4) : org.facing;
@@ -1062,7 +956,8 @@ class World {
         // Try to find empty space for offspring, starting close and moving outward
         // This prevents overcrowding and allows organisms to spread out
         let placed = false;
-        let ox = 0, oy = 0;
+        const xs = new Int16Array(mt.length);
+        const ys = new Int16Array(mt.length);
 
         // Try locations at increasing distances from parent center
         // Maximum radius: 8 cells (enough to escape crowding, not too far to be unrealistic)
@@ -1071,23 +966,18 @@ class World {
             const attempts = Math.min(12, radius * 4);
             const angleStep = (2 * Math.PI) / attempts;
 
-            // Shuffle attempt order to avoid bias
-            const angles = [];
-            for (let i = 0; i < attempts; i++) {
-                angles.push(angleStep * i + Math.random() * angleStep);
-            }
+            // Randomise the angular origin; a fixed first sector favours one compass direction.
+            const angleOrigin = Math.random() * Math.PI * 2;
+            for (let attempt = 0; attempt < attempts; attempt++) {
+                const angle = angleOrigin + angleStep * attempt + Math.random() * angleStep;
+                const ox = cx + Math.round(Math.cos(angle) * radius);
+                const oy = cy + Math.round(Math.sin(angle) * radius);
+                for (let i = 0; i < mt.length; i++) {
+                    xs[i] = this.wrap(rotatedMx[i] + ox);
+                    ys[i] = this.wrap(rotatedMy[i] + oy);
+                }
 
-            for (const angle of angles) {
-                const dx = Math.round(Math.cos(angle) * radius);
-                const dy = Math.round(Math.sin(angle) * radius);
-
-                ox = cx + dx;
-                oy = cy + dy;
-
-                const xs = rotatedMx.map(x => this.wrap(x + ox));
-                const ys = rotatedMy.map(y => this.wrap(y + oy));
-
-                if (this.placeCells(cid, xs, ys, mt)) {
+                if (this.canPlaceCells(xs, ys)) {
                     placed = true;
                     break;
                 }
@@ -1098,12 +988,7 @@ class World {
             return false;  // Couldn't find suitable space
         }
 
-        // Already placed by placeCells call above
-        const xs = rotatedMx.map(x => this.wrap(x + ox));
-        const ys = rotatedMy.map(y => this.wrap(y + oy));
-
-        // Child gets enough energy to survive for a bit
-        const childEnergy = cost * 0.8;
+        // Prepare the child before committing either grid state or the energy debit.
 
         // Calculate child's body composition to determine NN dimensions
         const childTypeCounts = new Int32Array(10);
@@ -1112,11 +997,11 @@ class World {
         }
 
         // Get required NN dimensions for child based on its body
-        const childDims = calculateNNDimensions(childTypeCounts);
+        const childDims = calculateNNDimensions(childTypeCounts, mt, childIds);
 
         // Resize parent brain I/O if needed, then mutate
         let childBrain;
-        if (childDims.inputs !== org.brain.din || childDims.outputs !== org.brain.dout) {
+        if (!MultiLayerBrain.sameIOLayout(org.brain.ioLayout, childDims)) {
             // Child has different body composition, resize brain I/O
             childBrain = MultiLayerBrain.resizeIO(org.brain, childDims);
             childBrain = childBrain.cloneMutate();
@@ -1126,14 +1011,16 @@ class World {
         }
         childBrain.setIOLayout(childDims);
 
-        // childFacing was already calculated above with body rotation
-        const child = new Organism(cid, xs, ys, mt, childEnergy, childBrain, childFacing);
+        const cid = this.nextId++;
+        const child = new Organism(cid, xs, ys, mt, childEnergy, childBrain, childFacing, childIds);
         this.initCaches(child);
+        if (!this.placeCells(cid, xs, ys, mt)) return false;
         this.organisms.set(cid, child);
         this.addToRunningTotals(child);
         this.adjustOrganismEnergy(org, -cost);
 
         stats.births++;
+        if (this.onBirth) this.onBirth(child);
         if (stats.birthSignatures) {
             stats.birthSignatures.push(child.getSignature());
         }
@@ -1142,7 +1029,6 @@ class World {
     }
 
     tick(popCap, stats) {
-        if (this.organisms.size === 0) return;
         this.tickCount++;
         if (this.sunlightMode === SUNLIGHT_MODE_REFUGIA) {
             const phase = Math.floor(this.tickCount / REFUGIA_PHASE_TICKS);
@@ -1160,7 +1046,9 @@ class World {
             orgs.push(org);
         }
 
-        // Sense, think, parse outputs, and update emit signals in one pass.
+        this.shuffleOrganisms(orgs);
+
+        // Every brain senses the previous tick's signals before any emitter is updated.
         for (let i = 0; i < orgs.length; i++) {
             const org = orgs[i];
             let parsed = org._parsedAction;
@@ -1176,7 +1064,7 @@ class World {
 
             if (org.energyOnlyPassive) {
                 const energyInput = Math.min(1.0, Math.max(0.0, org.energy / (MAX_CELLS * REPRO_COST_PER_CELL)));
-                parsed.reproduce = org.brain.getEnergyOnlyReproduce(energyInput);
+                parsed.reproduce = org.brain.getEnergyOnlyReproduce(Math.fround(energyInput));
                 parsed.forward = 0;
                 parsed.backward = 0;
                 parsed.rotateCW = 0;
@@ -1197,7 +1085,10 @@ class World {
                     org.emitSignals = new Array(numEmitters).fill(0.5);
                 }
                 for (let e = 0; e < numEmitters; e++) {
-                    org.emitSignals[e] = 1.0 / (1.0 + Math.exp(-act[outputIdx++]));
+                    if (!org._nextEmitSignals || org._nextEmitSignals.length !== numEmitters) {
+                        org._nextEmitSignals = new Float32Array(numEmitters);
+                    }
+                    org._nextEmitSignals[e] = (act[outputIdx++] + 1) * 0.5;
                 }
             } else if (org.emitSignals.length > 0) {
                 org.emitSignals.length = 0;
@@ -1216,7 +1107,12 @@ class World {
             }
         }
 
-        this.autoBiteContact(stats);
+        for (const org of orgs) {
+            if (org._nextEmitSignals) {
+                for (let e = 0; e < org.emitSignals.length; e++) org.emitSignals[e] = org._nextEmitSignals[e];
+            }
+        }
+        this.autoBiteContact(stats, orgs);
 
         for (let i = 0; i < orgs.length; i++) {
             orgs[i]._movedRecently = false;
@@ -1328,17 +1224,7 @@ class World {
                     if (sunlightFactor <= 0) continue;
 
                     // Count photo cells in 3×3 neighborhood (including self)
-                    let nearbyPhotoCount = this.photoNeighborCounts[idx];
-                    for (let dy = 1; dy <= 0; dy++) {
-                        for (let dx = -1; dx <= 1; dx++) {
-                            const nx = this.wrap(x + dx);
-                            const ny = this.wrap(y + dy);
-                            const nidx = this.getIdx(nx, ny);
-                            if (this.ctype[nidx] === CELL_PHOTO) {
-                                nearbyPhotoCount++;
-                            }
-                        }
-                    }
+                    const nearbyPhotoCount = this.photoNeighborCounts[idx];
 
                     // Light availability with diminishing returns: 1 / (1 + factor × (N - 1))
                     // Always positive, but decreases as neighbors increase
@@ -1398,7 +1284,6 @@ class World {
     }
 
     seedRandomOrganisms(n) {
-        console.log(`seedRandomOrganisms called with n=${n}`);
         let successCount = 0;
         for (let i = 0; i < n; i++) {
             const positions = [
@@ -1413,7 +1298,7 @@ class World {
             }
 
             try {
-                const startEnergy = REPRO_COST_PER_CELL * body.length * 3.0;  // Start with 3x reproduction cost
+                const startEnergy = REPRO_COST_PER_CELL * body.length * ENERGY_CAP_MULTIPLIER;  // Seeding is an external energy input
 
                 // Calculate NN dimensions based on body composition
                 const typeCounts = new Int32Array(10);
@@ -1429,7 +1314,7 @@ class World {
                 console.error(`Error creating organism ${i}:`, e);
             }
         }
-        console.log(`Successfully spawned ${successCount}/${n} organisms. Total organisms: ${this.organisms.size}`);
+        return successCount;
     }
 
     // Spawn organism from custom template (array of {x, y, type})
@@ -1443,7 +1328,7 @@ class World {
         const body = template.map(cell => [cell.x, cell.y, cell.type]);
 
         try {
-            const startEnergy = REPRO_COST_PER_CELL * body.length * 3.0;
+            const startEnergy = REPRO_COST_PER_CELL * body.length * ENERGY_CAP_MULTIPLIER;
 
             // Calculate NN dimensions based on body composition
             const typeCounts = new Int32Array(10);
@@ -1453,6 +1338,7 @@ class World {
             const dims = calculateNNDimensions(typeCounts);
 
             const brain = new MultiLayerBrain(dims.inputs, [], dims.outputs).setIOLayout(dims);
+            MultiLayerBrain.applyDefaultOutputBiases(brain);
             return this.addOrganism(body, startEnergy, brain);
         } catch (e) {
             console.error('Error spawning from template:', e);
@@ -1460,13 +1346,4 @@ class World {
         }
     }
 
-    getCellTypeCounts() {
-        const counts = new Int32Array(10);
-        for (const org of this.organisms.values()) {
-            for (let i = 0; i < org.typeCounts.length; i++) {
-                counts[i] += org.typeCounts[i];
-            }
-        }
-        return counts;
-    }
 }

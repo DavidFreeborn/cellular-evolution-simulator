@@ -23,8 +23,10 @@ Each organism also carries a small neural network whose inputs and outputs depen
 
 - Photosynthesis depends on sunlight availability and local shade.
 - Movement, metabolism, neural processing, and reproduction all cost energy.
+- Reproduction pays for the actual mutated child's construction (3 energy per cell) and initial reserve (2.4 per cell), leaving at least 2 energy in the parent. Explicit seeding supplies external energy.
 - Predation happens through contact biting rather than projectile attacks.
 - Brains begin simple and can evolve more structure over time.
+- Inherited sensors and emitters retain their neural channels when body parts change. Setting Mutation to 0 freezes body and neural parameters; placement and initial orientation can still vary.
 - Sensors and emitters are part of the same evolutionary process as body shape and behavior.
 
 ## Sunlight Modes
@@ -68,6 +70,7 @@ No install or build step is required.
 - `Epoch` for refugia mode
 - `Design organism`
 - `Seed organism`
+- `Inspect next organism` (keyboard-accessible selection)
 - `History`
 - `Guide`
 
@@ -83,6 +86,21 @@ You can also click organisms in the world to inspect their body plan, energy, ag
 - [js/world.js](js/world.js): core simulation rules
 - [js/simulator.js](js/simulator.js): controller, rendering, charts, and species history
 - [js/ui.js](js/ui.js): UI wiring and modal/chart helpers
+
+## Validation and performance
+
+The dependency-free checks use Node's built-in test runner (validated with Node 24):
+
+```sh
+node --test tests/*.test.cjs
+node benchmarks/simulation.cjs
+node benchmarks/history.cjs
+node benchmarks/soak.cjs 5000 1
+```
+
+The throughput benchmarks accept an optional Git revision for comparison. The simulation benchmark also accepts `--source-root <directory>` for a saved source snapshot. The soak runner checks grid ownership, cell/species counts, energy accounting, viable bodies, brain dimensions, and photosynthesis caches in all three sunlight modes and records source hashes.
+
+See [AUDIT.md](AUDIT.md) for the October 2026 repair ledger, measurements, preserved model choices, and remaining modelling limits.
 
 ## Notes
 

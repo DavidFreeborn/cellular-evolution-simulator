@@ -49,6 +49,7 @@ const E_MOVE_PER_CELL = 0.31;     // Movement cost per non-muscle cell (muscles 
 const E_METAB = 0.05;             // Metabolism cost per cell per tick
 const E_BITE_GAIN_PER_CELL = 1.5; // Energy gained from eating (includes digestion loss)
 const REPRO_COST_PER_CELL = 3.0;  // Cost to create one cell in offspring
+const OFFSPRING_RESERVE_FRACTION = 0.8; // Reserve paid by the parent in addition to construction
 const ENERGY_CAP_MULTIPLIER = 2.5; // Max energy = reproduction cost × this
 const E_BRAIN_PER_NODE = 0.0002;  // Brain cost per network node per tick (reduced 5x to allow sensor evolution)
 const E_BRAIN_PER_HIDDEN_LAYER = 0.005; // Small fixed upkeep per hidden layer to discourage gratuitous depth
@@ -64,7 +65,6 @@ const DECAY_TIME = 25;            // Ticks before corpse disappears
 // =====================
 // Sensor Constants
 // =====================
-const NOSE_GRID_SIZE = 5;         // 5×5 local neighborhood for directional density smell
 const NOSE_GRID_RADIUS = 2;
 const SENSOR_INPUTS = 8;          // Ahead cell: 7 one-hot cell kinds + 1 emitter-frequency channel
 const EYE_CHANNEL_TYPES = [CELL_MUSCLE, CELL_SENSOR, CELL_MOUTH, CELL_NOSE, CELL_PHOTO, CELL_SHIELD, CELL_DECAY];
@@ -72,16 +72,6 @@ const EYE_CHANNEL_INDEX = new Int8Array(10).fill(-1);
 for (let i = 0; i < EYE_CHANNEL_TYPES.length; i++) {
     EYE_CHANNEL_INDEX[EYE_CHANNEL_TYPES[i]] = i;
 }
-
-// Sensor perception encoding (normalized cell type values)
-const SENSE_EMPTY = 0;
-const SENSE_MUSCLE = 0.1;
-const SENSE_NOSE = 0.15;
-const SENSE_SENSOR = 0.2;
-const SENSE_MOUTH = 0.3;
-const SENSE_PHOTO = 0.6;
-const SENSE_SHIELD = 0.7;
-const SENSE_DECAY = 0.9;
 
 // Sensor grid transform coefficients
 // Converts organism-relative coords (ox, oy) to world coords based on facing direction
@@ -102,6 +92,21 @@ const SENSE_XX = [1, 0, -1, 0];   // North, East, South, West
 const SENSE_XY = [0, -1, 0, 1];
 const SENSE_YX = [0, 1, 0, -1];
 const SENSE_YY = [1, 0, -1, 0];
+
+// Precompute exactly the original directional sectors, including their overlap.
+const NOSE_STENCILS = Array.from({ length: 4 }, (_, facing) => {
+    const cells = [];
+    for (let oy = -NOSE_GRID_RADIUS; oy <= NOSE_GRID_RADIUS; oy++) {
+        for (let ox = -NOSE_GRID_RADIUS; ox <= NOSE_GRID_RADIUS; ox++) {
+            if (ox === 0 && oy === 0) continue;
+            const mask = (oy < 0 && ox <= 1 ? 1 : 0) | (ox > 0 && oy <= 1 ? 2 : 0) |
+                (oy > 0 && ox >= -1 ? 4 : 0) | (ox < 0 && oy >= -1 ? 8 : 0);
+            cells.push({ dx: ox * SENSE_XX[facing] + oy * SENSE_XY[facing],
+                dy: ox * SENSE_YX[facing] + oy * SENSE_YY[facing], mask });
+        }
+    }
+    return cells;
+});
 
 // =====================
 // Direction Constants
@@ -129,7 +134,7 @@ const REFUGIA_PATCH_JITTER = 4;
 // =====================
 // Mutation Rates (mutable - adjusted by UI)
 // =====================
-let MUT_WEIGHT_SIGMA = 0.02;      // Neural network weight mutation magnitude
+let MUT_WEIGHT_SIGMA = 0.02;      // Shared neural mutation scale; default preserves the 5% parameter rate
 let MUT_ADD_CELL_P = 0.02;        // Probability of adding a cell
 let MUT_DEL_CELL_P = 0.016;       // Probability of deleting a cell
 let MUT_SWAP_CELL_P = 0.016;      // Probability of swapping cell type
@@ -155,7 +160,7 @@ const UI_UPDATE_INTERVAL = 10;    // Update DOM/charts every N ticks
  * @param {Int32Array} typeCounts - Array of cell type counts
  * @returns {Object} {inputs, hidden, outputs, numEmitters, numNoses}
  */
-function calculateNNDimensions(typeCounts) {
+function calculateNNDimensions(typeCounts, types, cellIds) {
     const numSensors = typeCounts[CELL_SENSOR];
     const numNoses = typeCounts[CELL_NOSE] || 0;
     const numEmitters = typeCounts[CELL_EMIT];
@@ -170,5 +175,16 @@ function calculateNNDimensions(typeCounts) {
     // Initial hidden layer size (only used for brand new organisms in seeding)
     const hidden = 0;
 
-    return { inputs, hidden, outputs, numEmitters, numNoses, numSensors, hasMuscles };
+    const layout = { inputs, hidden, outputs, numEmitters, numNoses, numSensors, hasMuscles };
+    if (types && cellIds) {
+        layout.noseIds = [];
+        layout.sensorIds = [];
+        layout.emitterIds = [];
+        for (let i = 0; i < types.length; i++) {
+            if (types[i] === CELL_NOSE) layout.noseIds.push(cellIds[i]);
+            if (types[i] === CELL_SENSOR) layout.sensorIds.push(cellIds[i]);
+            if (types[i] === CELL_EMIT) layout.emitterIds.push(cellIds[i]);
+        }
+    }
+    return layout;
 }

@@ -43,20 +43,21 @@ class Simulator {
         this.speciesHistory = new Map();     // Map<signature, {firstSeen, lastSeen, peakPop, peakTick, totalOrgs, totalKills}>
 
         // Statistics
+        this._bornSignatures = new Set();
+        this._lastUIUpdateTick = -Infinity;
         this.stats = {
             births: 0,
             deaths: 0,
             predations: 0,
-            predatorSignatures: [],
-            birthSignatures: []
+            predatorSignatures: []
         };
     }
 
     init() {
         try {
-            console.log('Initializing simulator...');
             this.world = new World(GRID_SIZE);
             this.world.setSunlightMode(SUNLIGHT_MODE);
+            this.world.onBirth = org => this.registerOrganism(org, this.world.tickCount, true);
             this.canvas = document.getElementById('sim-canvas');
             this.ctx = this.canvas.getContext('2d');
             this.generation = 0;
@@ -76,6 +77,8 @@ class Simulator {
             // Reset species history
             this.speciesHistory = new Map();
 
+            this._bornSignatures.clear();
+            this._lastUIUpdateTick = -Infinity;
             this.selectedOrg = null;
             this.hideOrgInspector();
 
@@ -83,8 +86,7 @@ class Simulator {
                 births: 0,
                 deaths: 0,
                 predations: 0,
-                predatorSignatures: [],
-                birthSignatures: []
+                predatorSignatures: []
             };
 
             // Set canvas size based on zoom (use rounded cell size for pixel-perfect rendering)
@@ -95,9 +97,10 @@ class Simulator {
             this.initRenderBuffers();
 
             this.world.seedRandomOrganisms(30);
+            for (const org of this.world.organisms.values()) this.registerOrganism(org, 0);
+            this.collectStats();
             this.updateStats(true);  // Force initial UI update
             this.render();
-            console.log('Simulator initialized successfully');
         } catch (e) {
             console.error('Error during initialization:', e);
             alert('Error starting simulation: ' + e.message);
@@ -107,24 +110,24 @@ class Simulator {
     step(shouldRender = true) {
         // Track predation by species (array of predator signatures)
         this.stats.predatorSignatures.length = 0;
-        this.stats.birthSignatures.length = 0;
         this.world.tick(this.popCap, this.stats);
 
         // Record each predation for species history
         for (const sig of this.stats.predatorSignatures) {
             this.recordPredation(sig);
         }
-        this.generation++;
-        this.updateStats();
+        this.generation = this.world.tickCount;
+        this.collectStats();
 
         // OPTIMIZATION: Skip rendering when tab is hidden (background mode)
         // The simulation still runs, but we don't waste CPU on invisible frames
         if (shouldRender && !document.hidden) {
+            this.updateStats();
             this.render();
         }
     }
 
-    stepBatch(stepCount) {
+    stepBatch(stepCount, forceUI = false) {
         if (stepCount <= 0) return;
 
         for (let i = 0; i < stepCount; i++) {
@@ -132,121 +135,88 @@ class Simulator {
         }
 
         if (!document.hidden) {
+            this.updateStats(forceUI);
             this.render();
         }
     }
 
-    // OPTIMIZATION: Separate data collection from UI rendering
-    // Always collect data, but only update DOM every UI_UPDATE_INTERVAL ticks
-    updateStats(forceUpdate = false) {
+    registerOrganism(org, tick, isBirth = false) {
+        const signature = org.getSignature();
+        let history = this.speciesHistory.get(signature);
+        if (!history) {
+            history = { firstSeen: tick, lastSeen: tick, peakPop: 0, peakTick: tick,
+                totalOrgs: 0, totalKills: 0, exampleBody: this.extractBodyShape(org) };
+            this.speciesHistory.set(signature, history);
+        }
+        history.totalOrgs++;
+        history.lastSeen = tick;
+        if (isBirth) this._bornSignatures.add(signature);
+    }
+
+    // Called once per tick; display refreshes never replay events or append time.
+    collectStats(append = true) {
         const pop = this.world.organisms.size;
-
-        // Track cell distribution using running totals (O(1) instead of O(n*cells))
         const counts = this.world.getRunningCellCounts();
-        const cellDist = {
-            muscle: counts[CELL_MUSCLE],
-            nose: counts[CELL_NOSE] || 0,
-            sensor: counts[CELL_SENSOR],
-            mouth: counts[CELL_MOUTH],
-            photo: counts[CELL_PHOTO],
-            shield: counts[CELL_SHIELD],
-            emit: counts[CELL_EMIT],
-            decay: this.world.corpseTracker.corpses.size
-        };
-
-        // Running total energy is maintained incrementally inside the world.
-        const totalEnergy = this.world.getRunningTotalEnergy();
+        const cellDist = { muscle: counts[CELL_MUSCLE], nose: counts[CELL_NOSE],
+            sensor: counts[CELL_SENSOR], mouth: counts[CELL_MOUTH], photo: counts[CELL_PHOTO],
+            shield: counts[CELL_SHIELD], emit: counts[CELL_EMIT], decay: this.world.corpseTracker.corpses.size };
         const speciesCounts = this.world.getRunningSpeciesCounts();
-        const birthCounts = new Map();
-        for (const sig of this.stats.birthSignatures || []) {
-            birthCounts.set(sig, (birthCounts.get(sig) || 0) + 1);
-        }
-        let extinctionsThisTick = 0;
-        for (const sig of this.activeSpeciesSignatures) {
-            if (!speciesCounts.has(sig)) {
-                extinctionsThisTick++;
-            }
-        }
+        let extinctions = 0;
+        for (const sig of this._bornSignatures) this.activeSpeciesSignatures.add(sig);
+        for (const sig of this.activeSpeciesSignatures) if (!speciesCounts.has(sig)) extinctions++;
         this.activeSpeciesSignatures = new Set(speciesCounts.keys());
+        this._bornSignatures.clear();
 
-        // Diversity is simply the number of unique species
-        const diversity = speciesCounts.size;
-
-        // Update species history
         for (const [sig, count] of speciesCounts) {
-            if (!this.speciesHistory.has(sig)) {
-                // Store example body shape (normalized coordinates)
-                const exampleOrg = this.world.getExampleOrgForSignature(sig);
-                const exampleBody = this.extractBodyShape(exampleOrg);
-                this.speciesHistory.set(sig, {
-                    firstSeen: this.generation,
-                    lastSeen: this.generation,
-                    peakPop: count,
-                    peakTick: this.generation,
-                    totalOrgs: birthCounts.get(sig) || count,
-                    totalKills: 0,
-                    exampleBody: exampleBody  // {xs, ys, ts} normalized to origin
-                });
-            } else {
-                const stats = this.speciesHistory.get(sig);
-                stats.lastSeen = this.generation;
-                if (count > stats.peakPop) {
-                    stats.peakPop = count;
-                    stats.peakTick = this.generation;
-                }
-                if (birthCounts.has(sig)) {
-                    stats.totalOrgs += birthCounts.get(sig);
-                }
+            let history = this.speciesHistory.get(sig);
+            if (!history) {
+                // Accommodate externally supplied worlds without double-counting known events.
+                this.registerOrganism(this.world.getExampleOrgForSignature(sig), this.generation);
+                history = this.speciesHistory.get(sig);
+                history.totalOrgs = count;
             }
-            birthCounts.delete(sig);
+            history.lastSeen = this.generation;
+            if (count > history.peakPop) { history.peakPop = count; history.peakTick = this.generation; }
         }
 
-        for (const [sig, births] of birthCounts) {
-            if (this.speciesHistory.has(sig)) {
-                this.speciesHistory.get(sig).totalOrgs += births;
-            }
-        }
-
-        // Always collect history data
-        this.popHistory.push(pop);
-        this.energyHistory.push(totalEnergy);
-        this.diversityHistory.push(diversity);
-        this.cellDistHistory.push(cellDist);
-        this.extinctionHistory.push(extinctionsThisTick);
-
+        const store = (series, value) => {
+            if (append || series.length === 0) series.push(value);
+            else series[series.length - 1] = value;
+        };
+        store(this.popHistory, pop);
+        store(this.energyHistory, this.world.getRunningTotalEnergy());
+        store(this.diversityHistory, speciesCounts.size);
+        store(this.cellDistHistory, cellDist);
+        if (append) this.extinctionHistory.push(extinctions);
         if (this.energyHistory.length > this.maxEnergyHistoryLength) {
             this.energyHistory.splice(0, this.energyHistory.length - this.maxEnergyHistoryLength);
         }
+        if (this.cellDistHistory.length > this.maxCellDistHistoryLength) this.compressOldHistory();
+    }
 
-        // Compress only the heavy cell distribution history.
-        if (this.cellDistHistory.length > this.maxCellDistHistoryLength) {
-            this.compressOldHistory();
-        }
+    updateStats(forceUpdate = false) {
+        if (!forceUpdate && (document.hidden || this.generation - this._lastUIUpdateTick < UI_UPDATE_INTERVAL)) return;
+        this._lastUIUpdateTick = this.generation;
+        const pop = this.world.organisms.size;
+        const totalEnergy = this.world.getRunningTotalEnergy();
+        const diversity = this.world.getRunningSpeciesCounts().size;
+        document.getElementById('stat-generation').textContent = this.generation;
+        document.getElementById('stat-population').textContent = pop;
+        document.getElementById('stat-energy').textContent = Math.round(totalEnergy);
+        document.getElementById('stat-diversity').textContent = diversity;
+        document.getElementById('stat-births').textContent = this.stats.births;
+        document.getElementById('stat-deaths').textContent = this.stats.deaths;
+        document.getElementById('stat-predations').textContent = this.stats.predations;
 
-        // OPTIMIZATION: Only update DOM every UI_UPDATE_INTERVAL ticks
-        const shouldUpdateUI = forceUpdate || (this.generation % UI_UPDATE_INTERVAL === 0);
-
-        if (shouldUpdateUI) {
-            document.getElementById('stat-generation').textContent = this.generation;
-            document.getElementById('stat-population').textContent = pop;
-            document.getElementById('stat-energy').textContent = Math.round(totalEnergy);
-            document.getElementById('stat-diversity').textContent = diversity;
-            document.getElementById('stat-births').textContent = this.stats.births;
-            document.getElementById('stat-deaths').textContent = this.stats.deaths;
-            document.getElementById('stat-predations').textContent = this.stats.predations;
-
-            this.renderPopChart();
-            this.renderDiversityChart();
-            this.renderCellDistChart();
-            this.updateCellDistribution();
-            this.updateTopSpeciesDetail();
-        }
+        this.renderPopChart();
+        this.renderDiversityChart();
+        this.renderCellDistChart();
+        this.updateCellDistribution();
+        this.updateTopSpeciesDetail();
 
         // Always update organism inspector if one is selected (it's for a single organism, not expensive)
         if (this.selectedOrg && this.world.organisms.has(this.selectedOrg)) {
-            if (shouldUpdateUI) {
-                this.updateOrgInspector(this.world.organisms.get(this.selectedOrg));
-            }
+            this.updateOrgInspector(this.world.organisms.get(this.selectedOrg));
         } else if (this.selectedOrg) {
             this.selectedOrg = null;
             this.hideOrgInspector();
@@ -254,82 +224,43 @@ class Simulator {
     }
 
     getDiversity() {
-        const signatures = new Set();
-        for (const org of this.world.organisms.values()) {
-            signatures.add(org.getSignature());
-        }
-        return signatures.size;
+        return this.world.getRunningSpeciesCounts().size;
     }
 
     updateCellDistribution() {
+        const container = document.getElementById('cell-dist-bars');
         const counts = this.world.getRunningCellCounts();
         const decayCount = this.world.corpseTracker.corpses.size;
-        let total = decayCount;
-        for (const ctype of SIG_TYPES) {
-            total += counts[ctype];
+        const types = [...SIG_TYPES, CELL_DECAY];
+        const total = SIG_TYPES.reduce((sum, type) => sum + counts[type], decayCount);
+        if (!this._cellBars || this._cellBars[0].row.parentElement !== container) {
+            container.replaceChildren();
+            this._cellBars = types.map(type => {
+                const row = document.createElement('div');
+                row.className = 'cell-bar';
+                row.innerHTML = '<div class="cell-bar-label"></div><div class="cell-bar-bg"><div class="cell-bar-fill"></div></div><div class="cell-bar-count"></div>';
+                row.firstElementChild.textContent = CELL_NAMES[type];
+                const fill = row.querySelector('.cell-bar-fill');
+                fill.style.background = CELL_COLORS[type];
+                container.appendChild(row);
+                return { row, fill, count: row.lastElementChild, type };
+            });
         }
-
-        const container = document.getElementById('cell-dist-bars');
-        container.innerHTML = '';
-
-        if (total === 0) return;
-
-        for (const ctype of SIG_TYPES) {
-            const count = counts[ctype];
-            const pct = (count / total) * 100;
-
-            const bar = document.createElement('div');
-            bar.className = 'cell-bar';
-            bar.innerHTML = `
-                <div class="cell-bar-label">${CELL_NAMES[ctype]}</div>
-                <div class="cell-bar-bg">
-                    <div class="cell-bar-fill" style="width: ${pct}%; background: ${CELL_COLORS[ctype]};"></div>
-                </div>
-                <div class="cell-bar-count">${count}</div>
-            `;
-            container.appendChild(bar);
+        for (const bar of this._cellBars) {
+            const count = bar.type === CELL_DECAY ? decayCount : counts[bar.type];
+            bar.fill.style.width = (total ? count / total * 100 : 0) + '%';
+            bar.count.textContent = count;
         }
-
-        // Add decay cells
-        const decayPct = (decayCount / total) * 100;
-        const decayBar = document.createElement('div');
-        decayBar.className = 'cell-bar';
-        decayBar.innerHTML = `
-            <div class="cell-bar-label">${CELL_NAMES[CELL_DECAY]}</div>
-            <div class="cell-bar-bg">
-                <div class="cell-bar-fill" style="width: ${decayPct}%; background: ${CELL_COLORS[CELL_DECAY]};"></div>
-            </div>
-            <div class="cell-bar-count">${decayCount}</div>
-        `;
-        container.appendChild(decayBar);
     }
 
     getTopSpecies(topN = 10) {
-        const species = [];
-        const speciesCounts = this.world.getRunningSpeciesCounts();
-
-        for (const [signature, count] of speciesCounts) {
-            const exampleOrg = this.world.getExampleOrgForSignature(signature);
-            if (!exampleOrg) continue;
-
-            const typeCounts = {};
-            for (const ctype of SIG_TYPES) {
-                typeCounts[ctype] = exampleOrg.typeCounts[ctype] * count;
-            }
-
-            species.push({
-                signature,
-                count,
-                typeCounts,
-                brain: exampleOrg.brain,
-                avgCells: exampleOrg.xs.length
+        return Array.from(this.world.getRunningSpeciesCounts(), ([signature, count]) => ({signature, count}))
+            .sort((a, b) => b.count - a.count).slice(0, topN).map(entry => {
+                const composition = entry.signature.split(',').map(Number);
+                const typeCounts = {};
+                SIG_TYPES.forEach((type, i) => { typeCounts[type] = composition[i] * entry.count; });
+                return { ...entry, typeCounts, avgCells: composition.reduce((a, b) => a + b, 0) };
             });
-        }
-
-        // Sort by population count
-        species.sort((a, b) => b.count - a.count);
-
-        return species.slice(0, topN);
     }
 
     updateTopSpeciesDetail() {
@@ -357,7 +288,7 @@ class Simulator {
             for (const ctype of SIG_TYPES) {
                 if (sp.typeCounts[ctype] > 0) {
                     const avgPerOrg = (sp.typeCounts[ctype] / sp.count).toFixed(1);
-                    cellCounts.push(`<span style="color: ${CELL_COLORS[ctype]}; font-weight: 500;">${CELL_NAMES[ctype]}: ${avgPerOrg}</span>`);
+                    cellCounts.push(`<span class="composition-label"><span class="composition-swatch" style="background: ${CELL_COLORS[ctype]};" aria-hidden="true"></span>${CELL_NAMES[ctype]}: ${avgPerOrg}</span>`);
                 }
             }
             html += cellCounts.join(' | ');
@@ -803,18 +734,9 @@ class Simulator {
         ctx.fillStyle = '#1a1a2e';
         ctx.fillRect(0, 0, w, h);
 
-        // Find bounding box of organism
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity, maxY = -Infinity;
-        for (let i = 0; i < org.xs.length; i++) {
-            minX = Math.min(minX, org.xs[i]);
-            maxX = Math.max(maxX, org.xs[i]);
-            minY = Math.min(minY, org.ys[i]);
-            maxY = Math.max(maxY, org.ys[i]);
-        }
-
-        const orgW = maxX - minX + 1;
-        const orgH = maxY - minY + 1;
+        const body = this.extractBodyShape(org);
+        const orgW = Math.max(...body.xs) + 1;
+        const orgH = Math.max(...body.ys) + 1;
         const padding = 10;
         const availW = w - padding * 2;
         const availH = h - padding * 2;
@@ -828,8 +750,8 @@ class Simulator {
 
         // Draw cells
         for (let i = 0; i < org.xs.length; i++) {
-            const lx = org.xs[i] - minX;
-            const ly = org.ys[i] - minY;
+            const lx = body.xs[i];
+            const ly = body.ys[i];
             const px = offsetX + lx * cellSize;
             const py = offsetY + ly * cellSize;
 
@@ -1024,7 +946,12 @@ class Simulator {
     }
 
     spawnRandom(n) {
+        const firstId = this.world.nextId;
         this.world.seedRandomOrganisms(n);
+        for (const org of this.world.organisms.values()) {
+            if (org.id >= firstId) this.registerOrganism(org, this.generation);
+        }
+        this.collectStats(false);
         this.updateStats(true);  // Force UI update
         this.render();
     }
@@ -1033,8 +960,10 @@ class Simulator {
     // template: array of {x, y, type} relative coordinates
     spawnCustomOrganisms(n, template) {
         for (let i = 0; i < n; i++) {
-            this.world.spawnFromTemplate(template);
+            const id = this.world.spawnFromTemplate(template);
+            if (id !== null) this.registerOrganism(this.world.organisms.get(id), this.generation);
         }
+        this.collectStats(false);
         this.updateStats(true);
         this.render();
     }
@@ -1070,18 +999,33 @@ class Simulator {
         this.recentHistoryStartTick += chunkSize;
     }
 
-    // Get full population history for rendering (combines compressed + recent)
-    getFullPopulationHistory() {
-        return this.popHistory.map(val => ({ value: val, span: 1, isCompressed: false }));
+    scalarHistorySeries(values, maxPoints = Infinity, windowSize = 1) {
+        const stride = Math.max(1, Math.ceil(values.length / Math.max(1, maxPoints)));
+        const result = [];
+        let rollingSum = 0, min = Infinity, max = -Infinity, sum = 0, span = 0, final = 0;
+        for (let i = 0; i < values.length; i++) {
+            rollingSum += values[i];
+            if (i >= windowSize) rollingSum -= values[i - windowSize];
+            final = rollingSum / Math.min(windowSize, i + 1);
+            min = Math.min(min, final); max = Math.max(max, final); sum += final; span++;
+            if (span === stride || i === values.length - 1) {
+                result.push({ value: sum / span, min, max, final, span, isCompressed: span > 1 });
+                min = Infinity; max = -Infinity; sum = 0; span = 0;
+            }
+        }
+        return result;
     }
 
-    // Get full diversity history
-    getFullDiversityHistory() {
-        return this.diversityHistory.map(val => ({ value: val, span: 1, isCompressed: false }));
+    getFullPopulationHistory(maxPoints) {
+        return this.scalarHistorySeries(this.popHistory, maxPoints);
+    }
+
+    getFullDiversityHistory(maxPoints) {
+        return this.scalarHistorySeries(this.diversityHistory, maxPoints);
     }
 
     // Get full cell distribution history
-    getFullCellDistHistory() {
+    getFullCellDistHistory(maxPoints = Infinity) {
         const result = [];
         const cellTypes = ['muscle', 'nose', 'sensor', 'mouth', 'photo', 'shield', 'emit', 'decay'];
 
@@ -1097,11 +1041,23 @@ class Simulator {
             result.push({...dist, span: 1, isCompressed: false});
         }
 
-        return result;
+        if (result.length <= maxPoints) return result;
+        const grouped = [], stride = Math.ceil(result.length / Math.max(1, maxPoints));
+        for (let i = 0; i < result.length; i += stride) {
+            const group = { isCompressed: true, span: 0 };
+            for (const type of cellTypes) group[type] = 0;
+            for (let j = i; j < Math.min(result.length, i + stride); j++) {
+                group.span += result[j].span;
+                for (const type of cellTypes) group[type] += result[j][type] * result[j].span;
+            }
+            for (const type of cellTypes) group[type] /= group.span;
+            grouped.push(group);
+        }
+        return grouped;
     }
 
-    getFullExtinctionHistory() {
-        return this.extinctionHistory.map(val => ({ value: val, span: 1, isCompressed: false }));
+    getFullExtinctionHistory(maxPoints, windowSize = 1) {
+        return this.scalarHistorySeries(this.extinctionHistory, maxPoints, windowSize);
     }
 
     // Get historical statistics for the history panel
@@ -1156,22 +1112,11 @@ class Simulator {
     // Extract normalized body shape from an organism (for species history)
     extractBodyShape(org) {
         if (!org || org.xs.length === 0) return null;
-
-        // Find bounding box
-        let minX = org.xs[0], minY = org.ys[0];
-        for (let i = 1; i < org.xs.length; i++) {
-            if (org.xs[i] < minX) minX = org.xs[i];
-            if (org.ys[i] < minY) minY = org.ys[i];
-        }
-
-        // Normalize to origin (0,0)
-        const xs = [], ys = [], ts = [];
-        for (let i = 0; i < org.xs.length; i++) {
-            xs.push(org.xs[i] - minX);
-            ys.push(org.ys[i] - minY);
-            ts.push(org.ts[i]);
-        }
-
-        return {xs, ys, ts};
+        const size = this.world.size;
+        const offset = (v, anchor) => ((v - anchor + size * 1.5) % size) - size / 2;
+        const xs = Array.from(org.xs, x => offset(x, org.xs[0]));
+        const ys = Array.from(org.ys, y => offset(y, org.ys[0]));
+        const minX = Math.min(...xs), minY = Math.min(...ys);
+        return { xs: xs.map(x => x - minX), ys: ys.map(y => y - minY), ts: Array.from(org.ts) };
     }
 }

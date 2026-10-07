@@ -3,11 +3,13 @@
 // =====================
 
 class Organism {
-    constructor(id, xs, ys, ts, energy, brain, facing) {
+    constructor(id, xs, ys, ts, energy, brain, facing, cellIds) {
         this.id = id;
         this.xs = new Int16Array(xs);
         this.ys = new Int16Array(ys);
         this.ts = new Int8Array(ts);
+        // Heritable identities within this body plan, independent of array position/type.
+        this.cellIds = cellIds ? Array.from(cellIds) : Array.from(ts, (_, i) => i);
         this.energy = energy;
         this.brain = brain;
         this.age = 0;

@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cellular Evolution Simulator</title>
+    <meta name="description" content="Explore multicellular evolution through mutation, sunlight, movement and contact predation in an interactive artificial-life simulation.">
+    <meta property="og:title" content="Cellular Evolution Simulator">
+    <meta property="og:description" content="An interactive artificial-life simulation of mutation, sunlight and contact predation.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://www.davidpeterwallisfreeborn.com/fun/cellular-evolution/">
+    <meta name="twitter:card" content="summary">
     <link rel="canonical" href="https://www.davidpeterwallisfreeborn.com/fun/cellular-evolution/" />
     <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -62,7 +68,7 @@
                 <li><strong>Movement:</strong> Successful movement costs 0.31 energy per cargo cell. Muscles, eyes, noses, and emitters are treated as free to carry.</li>
                 <li><strong>Brain cost:</strong> Brains pay 0.0002 energy per node per tick, plus 0.005 per hidden layer.</li>
                 <li><strong>Teeth:</strong> Adjacent bites recover structural energy and some stored energy, but repeated living-organism kills are limited by a digestion cooldown.</li>
-                <li><strong>Reproduction:</strong> Creating offspring costs 3 energy per cell and can happen either from brain output or automatically at high energy.</li>
+                <li><strong>Reproduction:</strong> The parent pays 3 energy per child cell for construction plus 2.4 per child cell as a starting energy reserve, and must retain a 2-energy buffer. Reproduction can be requested by the brain or triggered automatically at high energy.</li>
             </ul>
 
             <h2>Sunlight Modes</h2>
@@ -175,6 +181,7 @@
 
             <button class="btn btn-secondary btn-small" id="design-btn">Design organism</button>
             <button class="btn btn-secondary btn-small" id="spawn-btn">Seed organism</button>
+            <button class="btn btn-secondary btn-small" id="inspect-next-btn">Inspect next organism</button>
             <button class="btn btn-secondary btn-small" id="history-btn">History</button>
             <button class="btn btn-secondary btn-small" id="guide-btn">Guide</button>
         </div>
@@ -195,7 +202,7 @@
             <!-- Canvas Panel (Center) -->
             <div class="canvas-panel">
                 <div class="canvas-container" id="canvas-container">
-                    <canvas id="sim-canvas" width="768" height="768"></canvas>
+                    <canvas role="img" aria-label="Simulation world; click an organism to inspect it" id="sim-canvas" width="768" height="768"></canvas>
                 </div>
                 <div class="canvas-hint">Tip: click any organism to inspect its body and neural network.</div>
             </div>
@@ -222,24 +229,24 @@
                     </dl>
 
                     <h3>Population History</h3>
-                    <canvas id="pop-chart" class="chart-container" width="300" height="100"></canvas>
+                    <canvas role="img" aria-label="Recent population history" id="pop-chart" class="chart-container" width="300" height="100"></canvas>
 
                     <h3>Species Over Time</h3>
-                    <canvas id="diversity-chart" class="chart-container" width="300" height="100"></canvas>
+                    <canvas role="img" aria-label="Recent body-composition diversity" id="diversity-chart" class="chart-container" width="300" height="100"></canvas>
 
                     <h3>Cell Distribution</h3>
-                    <canvas id="cell-dist-chart" class="chart-container" width="300" height="140"></canvas>
+                    <canvas role="img" aria-label="Recent cell distribution" id="cell-dist-chart" class="chart-container" width="300" height="140"></canvas>
                 </div>
             </div>
         </div>
 
         <!-- Bottom Panel for Selected Organism -->
         <div class="bottom-panel" id="bottom-panel">
-            <button class="bottom-panel-close" id="bottom-panel-close-btn" title="Close">&times;</button>
+            <button class="bottom-panel-close" id="bottom-panel-close-btn" title="Close" aria-label="Close organism inspector">&times;</button>
             <div class="bottom-panel-content">
                 <div class="organism-preview">
                     <h4 id="org-title">Organism #123</h4>
-                    <canvas id="organism-shape-canvas" width="120" height="120"></canvas>
+                    <canvas role="img" aria-label="Selected organism body" id="organism-shape-canvas" width="120" height="120"></canvas>
                     <span class="organism-preview-label" id="org-species-count">1 of this species</span>
                 </div>
                 <div class="organism-stats">
@@ -266,18 +273,18 @@
                         <h4>Neural Network</h4>
                         <span id="nn-info"></span>
                     </div>
-                    <canvas id="nn-canvas"></canvas>
+                    <canvas role="img" aria-label="Selected organism neural network" id="nn-canvas"></canvas>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Guide Modal -->
-    <div id="guide-modal" class="modal-overlay">
+    <div id="guide-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="guide-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Quick Guide</h2>
-                <button class="modal-close" id="guide-modal-close">&times;</button>
+                <h2 id="guide-title">Quick Guide</h2>
+                <button class="modal-close" id="guide-modal-close" aria-label="Close guide">&times;</button>
             </div>
             <div class="modal-body">
                 <h3>Cell Types</h3>
@@ -300,11 +307,12 @@
                     <li><strong>Speed</strong> - Ticks per second</li>
                     <li><strong>Zoom</strong> - View size</li>
                     <li><strong>Death</strong> - Random death chance per tick</li>
-                    <li><strong>Mutation</strong> - Body mutation rate</li>
+                    <li><strong>Mutation</strong> - Scales body and brain mutation; 0 disables both. The percentage is the add-cell probability before validity checks.</li>
                     <li><strong>Sunlight</strong> - Switch between global light, a central gradient, and alternating refugia phases</li>
                 </ul>
 
                 <h3>Features</h3>
+                <p>Species statistics group bodies by their counts of cell types, not by ancestry, shape or neural behaviour. Full population, diversity and extinction samples are retained; long charts group samples to screen resolution and show scalar minima and maxima.</p>
                 <ul>
                     <li><strong>Shade:</strong> Photo cells reduce each other's yield in crowded 3x3 clusters.</li>
                     <li><strong>Brains:</strong> New organisms start without hidden layers. Their feed-forward networks can later evolve extra nodes or depth, but depth costs energy.</li>
@@ -326,11 +334,11 @@
     </div>
 
     <!-- Organism Designer Modal -->
-    <div id="designer-modal" class="modal-overlay">
+    <div id="designer-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="designer-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Design organism</h2>
-                <button class="modal-close" id="designer-modal-close">&times;</button>
+                <h2 id="designer-title">Design organism</h2>
+                <button class="modal-close" id="designer-modal-close" aria-label="Close designer">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="designer-layout">
@@ -343,7 +351,7 @@
                         </div>
                     </div>
                     <div class="designer-preview">
-                        <canvas id="designer-preview-canvas" width="120" height="120"></canvas>
+                        <canvas role="img" aria-label="Designed organism preview" id="designer-preview-canvas" width="120" height="120"></canvas>
                         <div class="designer-stats">
                             <div>Cells: <span id="designer-cell-count">0</span></div>
                             <div id="designer-validity">Min 4 cells required</div>
@@ -360,30 +368,30 @@
     </div>
 
     <!-- History Modal -->
-    <div id="history-modal" class="modal-overlay">
+    <div id="history-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="history-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Simulation History</h2>
-                <button class="modal-close" id="history-modal-close">&times;</button>
+                <h2 id="history-title">Simulation History</h2>
+                <button class="modal-close" id="history-modal-close" aria-label="Close history">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="history-layout">
                     <div class="history-charts">
                         <div class="history-chart-container">
                             <h4>Population Over Time (Full History)</h4>
-                            <canvas id="history-pop-chart"></canvas>
+                            <canvas role="img" aria-label="Full population history" id="history-pop-chart"></canvas>
                         </div>
                         <div class="history-chart-container">
                             <h4>Species Diversity (Full History)</h4>
-                            <canvas id="history-div-chart"></canvas>
+                            <canvas role="img" aria-label="Full body-composition diversity history" id="history-div-chart"></canvas>
                         </div>
                         <div class="history-chart-container">
                             <h4>Extinction Rate (100-Tick Moving Average)</h4>
-                            <canvas id="history-extinction-chart"></canvas>
+                            <canvas role="img" aria-label="Extinction moving average" id="history-extinction-chart"></canvas>
                         </div>
                         <div class="history-chart-container">
                             <h4>Cell Distribution (Full History)</h4>
-                            <canvas id="history-cell-chart"></canvas>
+                            <canvas role="img" aria-label="Full cell distribution history" id="history-cell-chart"></canvas>
                         </div>
                     </div>
                     <div class="history-stats-grid">
@@ -438,7 +446,7 @@
     <script src="js/simulator.js"></script>
     <script src="js/main.js"></script>
     <script src="js/ui.js"></script>
-    <footer style="position:fixed;bottom:0;left:0;right:0;padding:8px;text-align:center;background:rgba(255,255,255,0.95);color:#666;font-size:0.85rem;border-top:1px solid #e0e0e0;z-index:1000;">
+    <footer class="site-footer">
       Created by <a href="https://www.davidpeterwallisfreeborn.com/fun/" style="color:#2563eb;">David Freeborn</a>. <a href="https://www.davidpeterwallisfreeborn.com/fun/cellular-evolution/" style="color:#2563eb;">View the latest version on David Freeborn's website</a>.
     </footer>
 </body>

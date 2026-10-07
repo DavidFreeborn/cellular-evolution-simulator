@@ -42,6 +42,7 @@ function startSimulation() {
 
     // Set up simulation event listeners
     setupSimulationEventListeners();
+    document.getElementById('start-btn').focus();
 }
 
 function formatPercentValue(value) {
@@ -74,13 +75,27 @@ function syncParameterControlsFromConstants() {
 }
 
 function setupSimulationEventListeners() {
+    document.getElementById('inspect-next-btn').addEventListener('click', () => {
+        const organisms = simulator.world.organisms;
+        let next = organisms.values().next().value;
+        let found = false;
+        for (const org of organisms.values()) {
+            if (found) { next = org; break; }
+            if (org.id === simulator.selectedOrg) found = true;
+        }
+        if (!next) return;
+        const cellSize = Math.round(CELL_SIZE * simulator.zoom);
+        simulator.handleCanvasClick(next.xs[0] * cellSize, next.ys[0] * cellSize);
+        document.getElementById('bottom-panel').scrollIntoView({ block: 'nearest' });
+        document.getElementById('bottom-panel-close-btn').focus({ preventScroll: true });
+    });
     syncParameterControlsFromConstants();
 
     // Canvas click with scroll offset support
     document.getElementById('sim-canvas').addEventListener('click', (e) => {
         const rect = e.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = (e.clientX - rect.left) * e.target.width / rect.width;
+        const y = (e.clientY - rect.top) * e.target.height / rect.height;
         simulator.handleCanvasClick(x, y);
     });
 
@@ -158,6 +173,7 @@ function setupSimulationEventListeners() {
     document.getElementById('history-btn').addEventListener('click', showHistoryPanel);
     document.getElementById('bottom-panel-close-btn').addEventListener('click', () => {
         simulator.hideOrgInspector();
+        document.getElementById('inspect-next-btn').focus();
     });
 
     // Modal close buttons
@@ -188,12 +204,38 @@ function setupSimulationEventListeners() {
 // Guide Modal (doesn't stop simulation)
 // =====================
 
+const modalReturnFocus = new WeakMap();
+function openModal(id) {
+    const modal = document.getElementById(id);
+    modalReturnFocus.set(modal, document.activeElement);
+    modal.classList.add('active');
+    document.getElementById('simulation-screen').inert = true;
+    modal.querySelector('button').focus();
+}
+function closeModal(id) {
+    const modal = document.getElementById(id);
+    modal.classList.remove('active');
+    document.getElementById('simulation-screen').inert = false;
+    modalReturnFocus.get(modal)?.focus();
+}
+document.addEventListener('keydown', event => {
+    const modal = document.querySelector('.modal-overlay.active');
+    if (!modal) return;
+    if (event.key === 'Escape') { event.preventDefault(); closeModal(modal.id); }
+    if (event.key === 'Tab') {
+        const buttons = Array.from(modal.querySelectorAll('button:not(:disabled), input, select, [tabindex="0"]'));
+        const first = buttons[0], last = buttons.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+});
+
 function showGuideModal() {
-    document.getElementById('guide-modal').classList.add('active');
+    openModal('guide-modal');
 }
 
 function hideGuideModal() {
-    document.getElementById('guide-modal').classList.remove('active');
+    closeModal('guide-modal');
 }
 
 // =====================
@@ -238,7 +280,8 @@ function setupDesignerGrid() {
     const gridSize = 12;
     for (let y = 0; y < gridSize; y++) {
         for (let x = 0; x < gridSize; x++) {
-            const cell = document.createElement('div');
+            const cell = document.createElement('button');
+            cell.type = 'button';
             cell.className = 'designer-cell';
             cell.dataset.x = x;
             cell.dataset.y = y;
@@ -273,6 +316,8 @@ function updateDesignerDisplay() {
         const y = parseInt(cell.dataset.y);
         const key = `${x},${y}`;
 
+        cell.setAttribute('aria-label', `Column ${x + 1}, row ${y + 1}: ${CELL_NAMES[designerGrid[key]] || 'empty'}`);
+
         if (designerGrid[key] !== undefined) {
             cell.style.background = CELL_COLORS[designerGrid[key]];
         } else {
@@ -283,13 +328,14 @@ function updateDesignerDisplay() {
     // Calculate stats
     const cellCount = Object.keys(designerGrid).length;
     const isContiguous = checkDesignerContiguity();
-    const isValid = cellCount >= MIN_CELLS && isContiguous;
+    const isValid = cellCount >= MIN_CELLS && cellCount <= MAX_CELLS && isContiguous;
 
     // Update info panel
     document.getElementById('designer-cell-count').textContent = cellCount;
     const validityEl = document.getElementById('designer-validity');
     validityEl.textContent = isValid ? '✓ Valid' :
-        (cellCount < MIN_CELLS ? `Add at least ${MIN_CELLS} cells` : 'Must be connected');
+        (cellCount < MIN_CELLS ? `Add at least ${MIN_CELLS} cells` :
+            cellCount > MAX_CELLS ? `Use at most ${MAX_CELLS} cells` : 'Must be connected');
     validityEl.className = isValid ? 'valid' : 'invalid';
 
     // Update create button
@@ -369,12 +415,12 @@ function updateDesignerPreview() {
 }
 
 function showOrganismDesigner() {
-    document.getElementById('designer-modal').classList.add('active');
+    openModal('designer-modal');
     clearDesigner();
 }
 
 function hideOrganismDesigner() {
-    document.getElementById('designer-modal').classList.remove('active');
+    closeModal('designer-modal');
 }
 
 function clearDesigner() {
@@ -384,7 +430,7 @@ function clearDesigner() {
 
 function createCustomOrganism() {
     const keys = Object.keys(designerGrid);
-    if (keys.length < MIN_CELLS) return;
+    if (keys.length < MIN_CELLS || keys.length > MAX_CELLS) return;
     if (!checkDesignerContiguity()) return;
 
     // Find center and create normalized template
@@ -428,23 +474,25 @@ function spawnCustomOrganisms(n) {
 // =====================
 
 function showHistoryPanel() {
-    document.getElementById('history-modal').classList.add('active');
+    openModal('history-modal');
     renderFullHistoryCharts();
     renderHistoricalStats();
 }
 
 function hideHistoryPanel() {
-    document.getElementById('history-modal').classList.remove('active');
+    closeModal('history-modal');
 }
 
 function renderFullHistoryCharts() {
     if (!simulator) return;
 
     // Get combined history (recent + compressed)
-    const popData = simulator.getFullPopulationHistory();
-    const divData = simulator.getFullDiversityHistory();
-    const cellData = simulator.getFullCellDistHistory();
-    const extinctionData = computeMovingAverageSeries(simulator.getFullExtinctionHistory(), 100);
+    const canvas = document.getElementById('history-pop-chart');
+    const pointBudget = Math.max(100, canvas.parentElement.clientWidth * 2);
+    const popData = simulator.getFullPopulationHistory(pointBudget);
+    const divData = simulator.getFullDiversityHistory(pointBudget);
+    const cellData = simulator.getFullCellDistHistory(pointBudget);
+    const extinctionData = simulator.getFullExtinctionHistory(pointBudget, 100);
 
     renderFullChart('history-pop-chart', popData, '#3498db', 'Population');
     renderFullChart('history-div-chart', divData, '#9b59b6', 'Species');
@@ -477,35 +525,13 @@ function getHistoryGeometry(data, width) {
     return { totalSpan, xPositions };
 }
 
-function computeMovingAverageSeries(data, windowSize) {
-    if (!data || data.length === 0) return [];
-
-    const result = new Array(data.length);
-    let sum = 0;
-
-    for (let i = 0; i < data.length; i++) {
-        sum += data[i].value || 0;
-        if (i >= windowSize) {
-            sum -= data[i - windowSize].value || 0;
-        }
-
-        result[i] = {
-            value: sum / Math.min(windowSize, i + 1),
-            span: Math.max(1, data[i].span || 1),
-            isCompressed: data[i].isCompressed || false
-        };
-    }
-
-    return result;
-}
-
 function renderFullChart(canvasId, data, color, label) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
     // Set canvas size based on container
-    canvas.width = canvas.parentElement.clientWidth - 30 || 800;
+    canvas.width = Math.max(1, canvas.parentElement.clientWidth - 30);
     canvas.height = 120;
 
     const w = canvas.width;
@@ -521,7 +547,7 @@ function renderFullChart(canvasId, data, color, label) {
     for (let i = 0; i < data.length; i++) {
         const value = data[i].value || 0;
         values[i] = value;
-        if (value > maxVal) maxVal = value;
+        maxVal = Math.max(maxVal, value, data[i].max || 0);
     }
 
     const geometry = getHistoryGeometry(data, w);
@@ -560,7 +586,7 @@ function renderFullChart(canvasId, data, color, label) {
     ctx.font = '10px sans-serif';
     ctx.fillText(`Max: ${Math.round(maxVal)}`, 5, 12);
     ctx.fillText(label, Math.max(5, w - 90), 12);
-    ctx.fillText(`Span: ${formatNumber(geometry.totalSpan)} ticks`, 5, h - 6);
+    ctx.fillText(`Span: ${formatNumber(Math.max(0, geometry.totalSpan - 1))} ticks`, 5, h - 6);
 
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 1;
@@ -573,7 +599,7 @@ function renderFullCellDistChart(canvasId, data) {
     const ctx = canvas.getContext('2d');
 
     // Set canvas size based on container
-    canvas.width = canvas.parentElement.clientWidth - 30 || 800;
+    canvas.width = Math.max(1, canvas.parentElement.clientWidth - 30);
     canvas.height = 120;
 
     const w = canvas.width;
@@ -634,7 +660,7 @@ function renderFullCellDistChart(canvasId, data) {
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = '#666';
     ctx.font = '10px sans-serif';
-    ctx.fillText(`Span: ${formatNumber(geometry.totalSpan)} ticks`, 5, h - 6);
+    ctx.fillText(`Span: ${formatNumber(Math.max(0, geometry.totalSpan - 1))} ticks`, 5, h - 6);
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, w, h);
@@ -700,24 +726,14 @@ function renderSpeciesCard(species, detailText, index) {
     </div>`;
 }
 
-// Format species composition with colored cell type names (like sidebar)
+// Keep text readable; swatches carry the same cell colours as the world.
 function formatSpeciesComposition(signature) {
     const counts = signature.split(',').map(Number);
-    // Must match SIG_TYPES order: MUSCLE, NOSE, SENSOR, MOUTH, PHOTO, SHIELD, EMIT
-    const typeInfo = [
-        {name: 'Muscle', color: '#7878FF'},
-        {name: 'Nose', color: '#FFA050'},
-        {name: 'Eye', color: '#FFFF78'},
-        {name: 'Teeth', color: '#FF7878'},
-        {name: 'Photo', color: '#78FF78'},
-        {name: 'Shield', color: '#78DCDC'},
-        {name: 'Emitter', color: '#FFFFFF'}
-    ];
 
     const parts = [];
     SIG_TYPES.forEach((type, i) => {
         if (counts[i] > 0) {
-            parts.push(`<span style="color: ${typeInfo[i].color}; font-weight: 500;">${typeInfo[i].name}: ${counts[i]}</span>`);
+            parts.push(`<span class="composition-label"><span class="composition-swatch" style="background: ${CELL_COLORS[type]};" aria-hidden="true"></span>${CELL_NAMES[type]}: ${counts[i]}</span>`);
         }
     });
     return parts.join(' | ') || 'Empty';
@@ -802,6 +818,7 @@ function toggleRunning() {
         startSimLoop();
     } else {
         stopSimLoop();
+        simulator.updateStats(true);
     }
 }
 
@@ -830,16 +847,15 @@ function stopSimLoop() {
 
 function startBackgroundLoop() {
     if (backgroundIntervalId) return;
-
-    const interval = Math.max(1000 / simulator.speed, 10);  // Min 10ms
+    lastTime = performance.now();
     backgroundIntervalId = setInterval(() => {
         if (!simulator || !simulator.running) {
             clearInterval(backgroundIntervalId);
             backgroundIntervalId = null;
             return;
         }
-        simulator.step();
-    }, interval);
+        advanceSimulationClock(performance.now());
+    }, 25);
 }
 
 // Handle visibility change to switch between RAF and setInterval
@@ -860,13 +876,15 @@ document.addEventListener('visibilitychange', () => {
             backgroundIntervalId = null;
         }
         resetFrameTiming();
+        simulator.updateStats(true);
+        simulator.render();
         animationId = requestAnimationFrame(runLoop);
     }
 });
 
 function step() {
     if (!simulator) return;
-    simulator.stepBatch(1);
+    simulator.stepBatch(1, true);
 }
 
 function reset() {
@@ -911,26 +929,19 @@ function toggleGrid() {
 
 function runLoop(timestamp) {
     if (!simulator || !simulator.running) return;
-
-    if (lastTime === 0) {
-        lastTime = timestamp;
-    }
-
-    const frameDelta = Math.min(timestamp - lastTime, 250);
-    lastTime = timestamp;
-
-    const interval = 1000 / simulator.speed;
-    stepAccumulator += frameDelta;
-
-    let stepsToRun = Math.floor(stepAccumulator / interval);
-    if (stepsToRun > 0) {
-        const maxStepsPerFrame = 8;
-        if (stepsToRun > maxStepsPerFrame) {
-            stepsToRun = maxStepsPerFrame;
-        }
-        stepAccumulator -= stepsToRun * interval;
-        simulator.stepBatch(stepsToRun);
-    }
-
+    advanceSimulationClock(timestamp);
     animationId = requestAnimationFrame(runLoop);
+}
+
+function advanceSimulationClock(timestamp) {
+    if (lastTime === 0) lastTime = timestamp;
+    const elapsed = Math.max(0, timestamp - lastTime);
+    lastTime = timestamp;
+    // Retain fractional ticks, but cap overdue work so resuming a throttled tab stays responsive.
+    stepAccumulator = Math.min(stepAccumulator + elapsed * simulator.speed / 1000, 32);
+    const steps = Math.min(8, Math.floor(stepAccumulator));
+    if (steps > 0) {
+        stepAccumulator -= steps;
+        simulator.stepBatch(steps);
+    }
 }

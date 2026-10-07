@@ -202,21 +202,6 @@ body {
     overflow: hidden;
 }
 
-@media (max-width: 1600px) {
-    .main-layout {
-        grid-template-columns: 1fr 320px;
-    }
-    .legend-panel {
-        display: none;
-    }
-}
-
-@media (max-width: 1100px) {
-    .main-layout {
-        grid-template-columns: 1fr;
-    }
-}
-
 /* Bottom Panel for Selected Organism */
 .bottom-panel {
     background: white;
@@ -1018,4 +1003,54 @@ body {
 
 .species-card .species-detail {
     margin-top: 0;
+}
+
+/* Native keyboard-operable designer buttons retain the original grid geometry. */
+.designer-cell { border: 0; padding: 0; }
+.designer-cell:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+.composition-label { color: #333; font-weight: 500; white-space: nowrap; }
+.composition-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border: 1px solid #777; }
+
+/* Keep every instrument available when the three desktop columns no longer fit. */
+.site-footer {
+    position: fixed; bottom: 0; left: 0; right: 0; padding: 8px;
+    text-align: center; background: rgba(255,255,255,0.95); color: #666;
+    font-size: 0.85rem; border-top: 1px solid #e0e0e0; z-index: 1000;
+}
+#simulation-screen { padding-bottom: 42px; }
+@media (max-width: 1600px) {
+    #simulation-screen { height: auto; min-height: 100vh; overflow: visible; padding-bottom: 0; }
+    .site-footer { position: static; }
+    .main-layout { flex: none; overflow: visible; grid-template-columns: minmax(0, 1fr) 320px; }
+    .canvas-panel { grid-column: 1; grid-row: 1; height: 65vh; min-height: 320px; }
+    .right-panel { grid-column: 2; grid-row: 1 / span 2; max-height: none; }
+    .legend-panel { display: block; grid-column: 1; grid-row: 2; }
+    .bottom-panel { height: auto; overflow: auto; }
+    .bottom-panel-content { flex-wrap: wrap; padding-right: 28px; }
+    .neural-network-container { min-height: 180px; }
+}
+
+@media (max-width: 1100px) {
+    .main-layout { grid-template-columns: minmax(0, 1fr); }
+    .right-panel { grid-column: 1; grid-row: 2; overflow: visible; }
+    .legend-panel { grid-row: 3; }
+    .bottom-panel-content { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+    .neural-network-container { grid-column: 1 / -1; min-width: 0; }
+}
+
+@media (max-width: 700px) {
+    .toolbar-divider { display: none; }
+    .toolbar-title { width: 100%; }
+    .designer-layout { flex-direction: column; align-items: stretch; }
+    .designer-palette { flex-direction: row; flex-wrap: wrap; }
+    .designer-grid-container { min-width: 0; }
+    .designer-grid { width: 100%; max-width: 347px; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: none; }
+    .designer-cell { width: 100%; height: auto; aspect-ratio: 1; }
+    .history-stats-grid { grid-template-columns: minmax(0, 1fr); }
+    .modal-body { padding: 12px; }
+    .canvas-hint { width: calc(100% - 16px); white-space: normal; text-align: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cell-bar-fill, .palette-btn, .designer-cell { transition: none; }
 }
